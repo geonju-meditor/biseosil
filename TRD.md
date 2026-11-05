@@ -182,7 +182,7 @@ flowchart TD
 | `too_many_inputs` | 400 | 입력 6개 초과 |
 | `unrecognized_format` | 400 | 형식 인식 실패 |
 | `input_too_long` | 413 | 30,000자 초과 |
-| `rate_limited` | 429 | IP당 10분 8회 초과 |
+| `rate_limited` | 429 | IP당 10분 30회 초과 |
 | `busy` | 503 | 동시 실행 4개 초과 |
 | `internal_error` | 500 | 그 밖의 오류 |
 

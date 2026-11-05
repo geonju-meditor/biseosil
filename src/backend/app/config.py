@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     max_input_chars: int = 30_000
     max_inputs: int = 6
     max_concurrent_runs: int = 4
-    rate_limit_runs: int = 8
+    rate_limit_runs: int = 30
     rate_limit_window_sec: int = 600
     run_timeout_sec: int = 180
 
