@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from typing import Any
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowEvent, handler
@@ -295,6 +294,7 @@ def _count(result: BaseModel) -> int:
 
 
 _SPACE = re.compile(r"\s+")
+_PUNCT = re.compile(r"[\s\"'“”‘’`.,!?~·…\-\[\]()]+")
 
 
 def _norm(text: str) -> str:
@@ -302,15 +302,14 @@ def _norm(text: str) -> str:
 
 
 def evidence_matches(quote: str, text: str) -> bool:
-    q, t = _norm(quote), _norm(text)
-    if not q or not t:
+    """인용이 원문에 그대로 있는지 본다(띄어쓰기·문장부호만 무시). 말줄임표로 나눈 조각은 각각 원문에 있어야 한다."""
+
+    t = _PUNCT.sub("", (text or "").lower())
+    pieces = [_PUNCT.sub("", p.lower()) for p in re.split(r"\.\.\.|…", quote or "")]
+    pieces = [p for p in pieces if p]
+    if not pieces or not t:
         return False
-    if q in t or (t in q and len(q) - len(t) <= 4):
-        return True
-    if len(q) < 6:
-        return False
-    match = SequenceMatcher(None, q, t).find_longest_match(0, len(q), 0, len(t))
-    return match.size >= max(6, int(len(q) * 0.6))
+    return all(p in t for p in pieces)
 
 
 def _minutes(hhmm: str | None) -> int:
@@ -321,12 +320,28 @@ def _minutes(hhmm: str | None) -> int:
         return -10_000
 
 
-def calendar_conflict(date: str, start: str | None, entry: CalendarEntry) -> bool:
-    if not start or not entry.start or date != entry.date:
+def _same_event(a: str, b: str) -> bool:
+    x, y = _norm(a), _norm(b)
+    return bool(x and y) and (x in y or y in x)
+
+
+def _span(start: str | None, end: str | None) -> tuple[int, int]:
+    s = _minutes(start)
+    e = _minutes(end) if end else -10_000
+    return s, e if e > s else s + 60
+
+
+def overlaps(a_start: str | None, a_end: str | None, b_start: str | None, b_end: str | None) -> bool:
+    """두 일정의 시작~끝 구간이 겹치는지 본다. 끝 시각을 모르면 1시간으로 본다."""
+
+    if not a_start or not b_start:
         return False
-    s, es = _minutes(start), _minutes(entry.start)
-    ee = _minutes(entry.end) if entry.end else es + 60
-    return es - 60 < s < ee
+    (s1, e1), (s2, e2) = _span(a_start, a_end), _span(b_start, b_end)
+    return s1 < e2 and s2 < e1
+
+
+def calendar_conflict(date: str, start: str | None, entry: CalendarEntry, end: str | None = None) -> bool:
+    return date == entry.date and overlaps(start, end, entry.start, entry.end)
 
 
 class ReviewExecutor(Executor):
@@ -392,6 +407,13 @@ class ReviewExecutor(Executor):
         if (o := by_kind.get("schedule")) and isinstance(o.result, ScheduleResult):
             events = [e for e in o.result.events if verify("schedule", e.title, e)]
             events = dedupe(events, lambda e: f"{e.date}{e.start}{_norm(e.title)[:6]}")
+            kept = []
+            for e in events:
+                if any(c.date == e.date and c.start == e.start and _same_event(e.title, c.title) for c in briefing.calendar):
+                    removed.append({"kind": "schedule", "title": e.title, "reason": "이미 내 캘린더에 있는 일정"})
+                else:
+                    kept.append(e)
+            events = kept
             events.sort(key=lambda e: (e.date, e.start or ""))
         debts: list[Any] = []
         if (o := by_kind.get("reply")) and isinstance(o.result, ReplyResult):
@@ -399,15 +421,20 @@ class ReviewExecutor(Executor):
             debts = dedupe(debts, lambda d: d.evidence.message_id + d.direction)
 
         timed = [e for e in events if e.start]
+        clash: dict[int, list[str]] = {}
         for i, a in enumerate(timed):
             for b in timed[i + 1 :]:
-                if a.date == b.date and abs(_minutes(a.start) - _minutes(b.start)) < 60:
-                    conflicts.append(f"{a.date} {a.start} '{a.title}'과(와) {b.start} '{b.title}' 제안 시간이 겹칩니다.")
+                if a.date == b.date and overlaps(a.start, a.end, b.start, b.end):
+                    msg = f"{a.date} {a.start} '{a.title}'과(와) {b.start} '{b.title}' 제안 시간이 겹칩니다."
+                    conflicts.append(msg)
+                    clash.setdefault(id(a), []).append(f"'{b.title}'과(와) 겹침")
+                    clash.setdefault(id(b), []).append(f"'{a.title}'과(와) 겹침")
             for entry in briefing.calendar:
-                if calendar_conflict(a.date, a.start, entry):
+                if calendar_conflict(a.date, a.start, entry, a.end):
                     conflicts.append(
                         f"{a.date} {a.start} '{a.title}'이(가) 내 캘린더의 '{entry.title}'({entry.start}~{entry.end or ''})과(와) 겹칩니다."
                     )
+                    clash.setdefault(id(a), []).append(f"내 캘린더 '{entry.title}'({entry.start})과(와) 겹침")
         crunch: dict[str, list[str]] = {}
         for t in todos:
             if t.due:
@@ -438,7 +465,7 @@ class ReviewExecutor(Executor):
                 "lead": briefing.plan.model_dump() if briefing.plan else None,
                 "todos": [t.model_dump() for t in todos],
                 "ledger": ledger,
-                "events": [e.model_dump() for e in events],
+                "events": [{**e.model_dump(), "conflicts": clash.get(id(e), [])} for e in events],
                 "calendar": [vars(e) for e in briefing.calendar],
                 "replies": [d.model_dump() for d in debts],
                 "review": review,

@@ -295,7 +295,7 @@ function evidenceHtml(ev) {
 function showResult(data) {
   result = data;
   for (const t of result.todos) t.done = false;
-  for (const e of result.events) e.selected = true;
+  for (const e of result.events) e.selected = !(e.conflicts && e.conflicts.length);
   $("#board-status").textContent = "모든 비서가 작업을 마쳤습니다.";
   const s = data.stats;
   $("#stats").innerHTML = `
@@ -362,6 +362,7 @@ function renderEvents() {
         <span class="pri ${e.my_attendance === "confirmed" ? "low" : "mid"}">${ATTEND[e.my_attendance]}</span>
         <button class="icon" data-act="del" data-kind="events" data-i="${i}" aria-label="${esc(e.title)} 빼기">✕</button></div>
       <p class="sub">${dday(e.date)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)}</p>
+      ${e.conflicts?.length ? `<p class="clash">⚠️ ${e.conflicts.map(esc).join(", ")} · 확인 후 직접 선택하세요</p>` : ""}
       ${evidenceHtml(e.evidence)}</li>`).join("")}</ul>`;
 }
 
@@ -455,8 +456,10 @@ document.addEventListener("click", async (e) => {
 
 async function exportIcs() {
   const chosen = result.events.filter((e) => e.selected);
+  const clashing = chosen.filter((e) => e.conflicts?.length).length;
   const body = `<p>아래 일정 ${chosen.length}개로 캘린더 파일을 만듭니다. 날짜와 시간이 맞는지 확인해 주세요.</p>
-    <ul class="confirm-list">${chosen.map((e) => `<li><b>${fmtDate(e.date)} ${esc(e.start || "종일")}</b> ${esc(e.title)}</li>`).join("")}</ul>`;
+    ${clashing ? `<p class="clash">⚠️ 이 중 ${clashing}개는 다른 일정과 시간이 겹칩니다.</p>` : ""}
+    <ul class="confirm-list">${chosen.map((e) => `<li><b>${fmtDate(e.date)} ${esc(e.start || "종일")}</b> ${esc(e.title)}${e.conflicts?.length ? ` <span class="clash">(겹침: ${e.conflicts.map(esc).join(", ")})</span>` : ""}</li>`).join("")}</ul>`;
   if (!(await confirmDialog("캘린더 파일 만들기", body))) return;
   try {
     const res = await fetch("/api/ics", {

@@ -34,8 +34,8 @@ code { font-size: .9em; }
 .brand { font-weight: 800; font-size: 1.35rem; letter-spacing: -.02em; }
 .tagline { margin: 0; opacity: .9; font-size: .95rem; }
 
-main { max-width: 1080px; margin: 0 auto; padding: 20px clamp(12px, 3vw, 24px) 40px; display: grid; gap: 20px; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(16px, 3vw, 28px); box-shadow: var(--shadow); }
+main { max-width: 1080px; width: 100%; min-width: 0; margin: 0 auto; padding: 20px clamp(12px, 3vw, 24px) 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(16px, 3vw, 28px); box-shadow: var(--shadow); }
 .hero h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); letter-spacing: -.03em; }
 .lead-text { font-size: 1.05rem; max-width: 62ch; }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -169,3 +169,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .35); }
   .item .row { flex-wrap: wrap; }
   th:nth-child(4), td:nth-child(4) { display: none; }
 }
+
+.clash { margin: 4px 0 0; font-size: .85rem; color: #8a2b00; }
+.pane, .items, .item, .stats, .summary, #alerts { min-width: 0; overflow-wrap: anywhere; }

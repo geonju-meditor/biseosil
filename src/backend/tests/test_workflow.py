@@ -62,6 +62,8 @@ def fake_agents(monkeypatch):
             events=[
                 ScheduleEvent(title="분기 리뷰 회의", room="마케팅팀", date="2026-11-10", start="15:00",
                               evidence=Evidence(message_id="s1-m7", quote="다음주 화요일 오후 3시에 분기 리뷰 회의 합니다")),
+                ScheduleEvent(title="주간회의", room="마케팅팀", date="2026-11-05", start="10:00",
+                              evidence=Evidence(message_id="s1-m12", quote="내일 오전 10시 주간회의 잊지 마세요")),
             ]
         ),
         ReplyResult: ReplyResult(debts=[ReplyDebt(direction="i_owe", room="마케팅팀", counterpart="이수진", topic="광고비 엑셀",
@@ -93,6 +95,8 @@ async def test_workflow_reviews_and_isolates_errors(fake_agents):
     assert output["todos"][0]["evidence"]["sender"] == "김하늘"
     assert output["ledger"]["assignments"][0]["owner"] == "미정"
     assert any("고객사 A 월간 보고" in c for c in output["review"]["conflicts"]), "기존 캘린더와 충돌 표시"
+    assert [e["title"] for e in output["events"]] == ["분기 리뷰 회의"], "이미 캘린더에 있는 일정은 빼야 한다"
+    assert output["events"][0]["conflicts"], "겹치는 일정에는 표시가 붙어야 한다"
     assert "reply" in output["errors"] and output["replies"] == [], "한 비서 실패는 그 비서만 오류로 표시"
     channels = [i["channel"] for i in output["inputs"]]
     assert channels == ["kakao", "kakao", "mail", "calendar"]

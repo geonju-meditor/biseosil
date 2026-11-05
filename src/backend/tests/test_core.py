@@ -74,6 +74,7 @@ def test_resolve_korean_date():
     assert resolve_korean_date("다음주 화요일", ref) == "2026-11-10"
     assert resolve_korean_date("11월 14일", ref) == "2026-11-14"
     assert resolve_korean_date("언젠가", ref) == "unknown"
+    assert resolve_korean_date("2월 30일", ref) == "unknown", "없는 날짜는 오류 대신 unknown"
 
 
 def test_mask_pii_and_injection():
@@ -90,6 +91,17 @@ def test_evidence_matching_is_strict_enough():
     assert evidence_matches("오늘 안에 골라주면 바로 작업할게!", text)
     assert not evidence_matches("교수님께 메일을 보내 달라고 했다", text)
     assert not evidence_matches("", text)
+    assert evidence_matches("PPT 템플릿... 오늘 안에 골라주면", text)
+    assert not evidence_matches("금요일까지 제안서는 확정입니다", "금요일까지 제안서는 취소입니다"), "뜻이 바뀐 인용은 거부"
+
+
+def test_calendar_conflict_uses_time_ranges():
+    from app.channels import CalendarEntry
+
+    entry = CalendarEntry(id="c1", title="기존", date="2026-11-10", start="15:00", end="16:00")
+    assert calendar_conflict("2026-11-10", "14:00", entry, "15:30"), "14:00~15:30은 15:00~16:00과 겹친다"
+    assert not calendar_conflict("2026-11-10", "13:00", entry, "14:00")
+    assert not calendar_conflict("2026-11-11", "15:00", entry)
 
 
 def test_ics_escapes_and_normalizes_time():

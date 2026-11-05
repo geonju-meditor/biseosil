@@ -33,9 +33,12 @@ def resolve_korean_date(expression: str, reference_date: str) -> str:
 
     if match := _ABS.search(text):
         year = int(match["y"]) if match["y"] else ref.year
-        candidate = date(year, int(match["m"]), int(match["d"]))
-        if not match["y"] and candidate < ref - timedelta(days=60):
-            candidate = candidate.replace(year=year + 1)
+        try:
+            candidate = date(year, int(match["m"]), int(match["d"]))
+            if not match["y"] and candidate < ref - timedelta(days=60):
+                candidate = candidate.replace(year=year + 1)
+        except ValueError:
+            return "unknown"
         return candidate.isoformat()
 
     for word, delta in (("오늘", 0), ("금일", 0), ("내일", 1), ("모레", 2), ("글피", 3)):
