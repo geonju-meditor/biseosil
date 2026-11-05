@@ -1,0 +1,64 @@
+name: Build and deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", ".github/workflows/deploy.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 비밀번호 없이 OIDC 페더레이션으로 Azure 로그인
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push image
+        run: |
+          IMAGE="${{ vars.AZURE_CONTAINER_REGISTRY }}.azurecr.io/biseosil/app:${{ github.sha }}"
+          az acr login --name "${{ vars.AZURE_CONTAINER_REGISTRY }}"
+          docker build --platform linux/amd64 -f src/backend/Dockerfile -t "$IMAGE" src
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to Container App
+        run: |
+          az containerapp update \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$IMAGE" -o none
+
+      - name: Health check
+        run: |
+          FQDN=$(az containerapp show -n "${{ vars.AZURE_CONTAINER_APP }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 30); do
+            if curl -fsS "https://$FQDN/health"; then exit 0; fi
+            sleep 10
+          done
+          exit 1
