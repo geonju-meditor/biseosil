@@ -74,7 +74,7 @@ main { max-width: 1080px; width: 100%; min-width: 0; margin: 0 auto; padding: 24
 
 /* ---------- 입력 ---------- */
 .own { margin-top: 20px; background: var(--soft); border-radius: 22px; padding: 18px 22px; }
-.own summary { cursor: pointer; font-weight: 700; }
+.own summary { cursor: pointer; font-weight: 700; padding: 11px 0; line-height: 22px; }
 .form { display: grid; gap: 16px; margin-top: 16px; }
 .field { display: grid; gap: 6px; }
 .field label { font-weight: 600; font-size: .95rem; }
@@ -116,7 +116,7 @@ textarea { resize: vertical; }
 .tag { display: inline-block; font-size: .74rem; padding: 0 7px; border-radius: 6px; background: var(--soft); }
 .tag.warn { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
 .log-wrap { margin-top: 16px; }
-.log-wrap summary { cursor: pointer; color: var(--muted); font-size: .88rem; }
+.log-wrap summary { cursor: pointer; padding: 12px 0; line-height: 20px; color: var(--muted); font-size: .88rem; }
 .log { font-size: .8rem; color: var(--muted); max-height: 220px; overflow: auto; padding-left: 1.4em; }
 
 /* ---------- 결과 ---------- */
@@ -141,7 +141,7 @@ textarea { resize: vertical; }
 .alert-list li:first-child { border-top: 0; }
 .alert-list li.err { color: var(--err); }
 .more { background: #fff; border-radius: var(--r); margin-top: 6px; }
-.more summary { cursor: pointer; padding: 10px 20px; font-size: .86rem; color: var(--muted); }
+.more summary { cursor: pointer; padding: 12px 20px; line-height: 20px; font-size: .86rem; color: var(--muted); }
 .more .alert-list { border-radius: 0 0 var(--r) var(--r); }
 
 .tabs { display: flex; gap: 4px; margin-top: 28px; padding: 4px; background: #e5e8eb; border-radius: 14px; overflow-x: auto; }

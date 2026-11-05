@@ -2,7 +2,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 const AGENTS = {
-  intake: { emoji: "🧭", name: "팀장", role: "입력 접수·분배" },
+  intake: { emoji: "📮", name: "접수 담당", role: "입력 접수·분배" },
   collector: { emoji: "📥", name: "수집 비서", role: "메시지 정리·개인정보 가림·지시문 탐지" },
   "collector-kakao": { emoji: "💬", name: "카톡 수집 비서", role: "대화 내보내기 정리·개인정보 가림·지시문 탐지" },
   "collector-mail": { emoji: "📧", name: "메일 수집 비서", role: "메일 나누기·개인정보 가림·지시문 탐지" },
