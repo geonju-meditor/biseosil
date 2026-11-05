@@ -177,6 +177,10 @@ class LeadExecutor(Executor):
         self._runtime = runtime
 
     @handler
+    async def run_single(self, collected: CollectedRoom, ctx: WorkflowContext[Briefing]) -> None:
+        await self.run([collected], ctx)
+
+    @handler
     async def run(self, collected: list[CollectedRoom], ctx: WorkflowContext[Briefing]) -> None:
         rooms = sorted(collected, key=lambda c: c.room.index)
         me = guess_me([c.room for c in rooms], rooms[0].me_hint if rooms else None)
@@ -453,11 +457,14 @@ def build_workflow(runtime: Runtime, input_count: int):
     lead = LeadExecutor(runtime)
     specialists = [SpecialistExecutor(kind, runtime) for kind in SPECIALISTS]
     review = ReviewExecutor()
+    builder = WorkflowBuilder(start_executor=intake, name="biseosil")
+    if len(collectors) == 1:
+        # fan-out/fan-in은 대상이 2개 이상이어야 하므로 입력 1건은 직선 연결로 처리한다.
+        builder = builder.add_edge(intake, collectors[0]).add_edge(collectors[0], lead)
+    else:
+        builder = builder.add_fan_out_edges(intake, collectors).add_fan_in_edges(collectors, lead)
     return (
-        WorkflowBuilder(start_executor=intake, name="biseosil")
-        .add_fan_out_edges(intake, collectors)
-        .add_fan_in_edges(collectors, lead)
-        .add_fan_out_edges(lead, specialists)
+        builder.add_fan_out_edges(lead, specialists)
         .add_fan_in_edges(specialists, review)
         .build()
     )

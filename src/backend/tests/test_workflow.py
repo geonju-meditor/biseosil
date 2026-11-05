@@ -115,6 +115,15 @@ async def test_deterministic_fallback_runs_whole_sample():
     assert any(p["status"] == "tool" for p in progress), "날짜 도구 호출이 진행판에 보여야 한다"
 
 
+async def test_single_input_runs_without_fan_out():
+    workflow = build_workflow(Runtime(client=None), 1)
+    output = None
+    async for ev in workflow.run(RunInput([RawInput((SAMPLES / FILES[0]).read_text(encoding="utf-8"))], "김하늘"), stream=True):
+        if ev.type == "output":
+            output = ev.data
+    assert output is not None and output["todos"], "대화 1개만 넣어도 끝까지 동작해야 한다"
+
+
 def _events(text: str) -> list[dict]:
     return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
 

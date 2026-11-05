@@ -213,6 +213,7 @@ flowchart TD
 
 - `azure.yaml` + `infra/main.bicep`(구독 범위, `rg-{env}` 생성) + `infra/modules/application.bicep`.
 - 인프라: `azd env set COPILOT_GITHUB_TOKEN …` 후 `azd provision`으로 위 리소스를 만든다.
+  ACR 원격 빌드가 허용된 구독이나 로컬 Docker가 있는 환경에서는 `azd up` 한 번으로 인프라와 앱을 함께 배포한다.
 - 앱 배포(CI/CD): `.github/workflows/deploy.yml`이 `main` 푸시마다 테스트(`pytest`) → 이미지 빌드 →
   ACR 푸시 → `az containerapp update` → `/health` 확인을 수행한다. Azure 로그인은 OIDC 페더레이션
   (main 브랜치 전용, 저장된 비밀번호 없음)이며 권한은 ACR `AcrPush`와 리소스 그룹 `Contributor`로 제한한다.
