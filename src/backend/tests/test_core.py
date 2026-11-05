@@ -110,3 +110,4 @@ def test_ics_escapes_and_normalizes_time():
     assert "DTSTART;TZID=Asia/Seoul:20261105T235900" in ics
     allday = build_ics([IcsEvent(title="마감", date="2026-11-06")])
     assert "DTSTART;VALUE=DATE:20261106" in allday
+

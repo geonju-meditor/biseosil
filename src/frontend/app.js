@@ -335,6 +335,7 @@ function showResult(data) {
   for (const w of lead?.warnings || []) alerts.push(`<li>💡 ${esc(w)}</li>`);
   const errs = Object.entries(data.errors || {});
   if (data.mode !== "deterministic" && fb.length) alerts.push(`<li class="err">⚠️ ${fb.map((k) => esc(AGENTS[k]?.name || k)).join(", ")}는 AI 응답이 실패해 규칙 기반으로 대신 정리했습니다.</li>`);
+  if (data.security?.notice) alerts.push(`<li>🛡️ ${esc(data.security.notice)}</li>`);
   for (const [k, m] of errs) alerts.push(`<li class="err">⚠️ ${esc(AGENTS[k]?.name || k)}: ${esc(m)}</li>`);
   $("#alerts").innerHTML = alerts.length ? `<ul class="alert-list">${alerts.join("")}</ul>` : "";
   renderAll();
@@ -429,7 +430,7 @@ function renderReview() {
   pane.innerHTML = `
     <p>검토 비서는 모든 항목의 인용문을 원문과 대조해, 근거가 없거나 지시문 의심 메시지에서 나온 항목을 뺐습니다.</p>
     <h3 class="group">🛡️ 지시문 의심 메시지 (${flagged.length})</h3>
-    ${flagged.length ? `<ul class="items">${flagged.map((f) => `<li class="item warn"><p class="sub">${esc(f.room)} · ${esc(f.sender)} · ${esc(f.when)}</p><p>“${esc(f.text)}”</p><p class="muted small">→ 비서들은 이 문장을 지시로 따르지 않고 데이터로만 다뤘습니다.</p></li>`).join("")}</ul>` : `<p class="empty">없음</p>`}
+    ${flagged.length ? `<ul class="items">${flagged.map((f) => `<li class="item warn"><p class="sub">${esc(f.room)} · ${esc(f.sender)} · ${esc(f.when)}</p><p class="muted small">→ 지시문처럼 보여 내용을 비서에게 보내지 않고 격리했습니다.</p></li>`).join("")}</ul>` : `<p class="empty">없음</p>`}
     <h3 class="group">🗑️ 검토에서 뺀 항목 (${result.review.removed.length})</h3>
     ${result.review.removed.length ? `<ul class="items">${result.review.removed.map((r) => `<li class="item"><p class="title">${esc(r.title)}</p><p class="sub">${esc(r.reason)}</p></li>`).join("")}</ul>` : `<p class="empty">모든 항목이 원문 근거 확인을 통과했습니다.</p>`}
     <h3 class="group">🔒 개인정보</h3><p>${pii ? `전화번호·이메일·계좌번호 등 ${pii}건을 AI에 보내기 전에 가렸습니다.` : "가릴 개인정보가 없었습니다."} 입력 원문은 서버에 저장하지 않습니다.</p>`;

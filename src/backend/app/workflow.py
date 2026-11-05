@@ -23,7 +23,7 @@ from . import agents as A
 from . import fallback as F
 from .channels import CHANNEL_LABEL, parse_input
 from .kakao import CalendarEntry, Message, Room, guess_me
-from .safety import looks_like_injection, mask_pii
+from .safety import QUARANTINED, looks_like_injection, mask_pii
 from .schemas import LeadPlan, ReplyResult, ScheduleResult, TodoResult
 
 WORKFLOW_PATTERN = "fan-out(채널별 수집) → 팀장 → fan-out(전문 비서) → fan-in(검토)"
@@ -150,6 +150,8 @@ class CollectorExecutor(Executor):
                 pii[key] = pii.get(key, 0) + value
             if looks_like_injection(message.text):
                 flagged.append(message.id)
+                # 의심 문장은 원문 대신 격리 표시만 비서에게 전달한다(모델이 지시를 읽거나 되풀이하지 않도록).
+                message.text = QUARANTINED
         await ctx.add_event(
             _event(
                 self.id,
@@ -164,6 +166,7 @@ class CollectorExecutor(Executor):
                     "participants": room.participants,
                     "pii": pii,
                     "flagged": flagged,
+                    **({"security": f"프롬프트 인젝션 의심 메시지 {len(flagged)}건 격리"} if flagged else {}),
                 },
             )
         )
@@ -390,11 +393,11 @@ class ReviewExecutor(Executor):
         def verify(kind: str, title: str, item: Any) -> bool:
             ev = item.evidence
             found = index.get(ev.message_id.strip())
-            if not found or not evidence_matches(ev.quote, found[1].text):
-                removed.append({"kind": kind, "title": title, "reason": "원문에서 근거를 찾지 못함"})
-                return False
             if ev.message_id.strip() in flagged:
                 removed.append({"kind": kind, "title": title, "reason": "지시문 의심 메시지에서 나온 항목"})
+                return False
+            if not found or not evidence_matches(ev.quote, found[1].text):
+                removed.append({"kind": kind, "title": title, "reason": "원문에서 근거를 찾지 못함"})
                 return False
             room, message = found
             ev.message_id = message.id
@@ -497,6 +500,14 @@ class ReviewExecutor(Executor):
                 "review": review,
                 "errors": errors,
                 "fallbacks": briefing.fallbacks + [o.kind for o in outputs if o.fallback],
+                "security": {
+                    "injectionSuspected": sorted(briefing.flagged),
+                    "notice": (
+                        f"프롬프트 인젝션 의심 메시지 {len(briefing.flagged)}건은 내용을 비서에게 보내지 않고 격리했습니다."
+                        if briefing.flagged
+                        else ""
+                    ),
+                },
                 "source": {
                     m_id: {"room": r.name, "channel": r.channel, "sender": m.sender, "when": f"{m.date} {m.time}", "text": m.text}
                     for m_id, (r, m) in index.items()
