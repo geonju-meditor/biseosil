@@ -201,12 +201,32 @@ def test_api_run_streams_ag_ui_events(monkeypatch):
     assert result["inputs"][2]["name"] == "받은 메일함"
 
 
+def test_api_run_accepts_free_text_memo(monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(main.settings, "agent_provider", "deterministic")
+    body = {"inputs": [{"text": "내일까지 보고서 부탁해요\n\n금요일 오후 3시 팀 회의 준비"}]}
+    with TestClient(main.app) as client, client.stream("POST", "/api/run", json=body) as res:
+        assert res.status_code == 200
+        events = _events("".join(res.iter_text()))
+    assert events[0]["type"] == "RUN_STARTED" and events[-1]["type"] == "RUN_FINISHED"
+    graph = next(e for e in events if e["type"] == "CUSTOM" and e["name"] == "workflow.graph")["value"]
+    assert any(n.get("channel") == "text" and "메모 수집 비서" in n["label"] for n in graph["nodes"])
+    result = next(e for e in events if e["type"] == "CUSTOM" and e["name"] == "workflow.result")["value"]
+    assert result["inputs"][0]["channel"] == "text" and result["inputs"][0]["messages"] == 2
+    assert any("보고서" in t["title"] for t in result["todos"])
+
+
 def test_api_errors_use_common_format():
     from app import main
 
     with TestClient(main.app) as client:
-        res = client.post("/api/run", json={"inputs": [{"text": "카톡 아님"}]})
+        res = client.post("/api/run", json={"inputs": [{"text": "카톡 아님", "channel": "kakao"}]})
         assert res.status_code == 400 and res.json()["error"]["code"] == "unrecognized_format"
+        assert set(res.json()) == {"error"} and set(res.json()["error"]) == {"code", "message"}
+        assert "'붙여넣은 내용 1'" in res.json()["error"]["message"]
+        res = client.post("/api/run", json={"inputs": [{"text": "x", "name": "팀방"}, {"text": "  \n ", "label": "붙여넣은 내용 2"}]})
+        assert res.status_code == 400 and "'붙여넣은 내용 2'" in res.json()["error"]["message"]
         res = client.post("/api/run", json={"inputs": [{"text": "가" * 30_001}]})
         assert res.json()["error"]["code"] == "input_too_long"
         res = client.post("/api/run", json={"inputs": [{"text": "x"}] * 7})

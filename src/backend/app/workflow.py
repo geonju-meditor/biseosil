@@ -681,7 +681,7 @@ def build_workflow(runtime: Runtime, input_count: int):
 
 def workflow_graph(channels: list[str] | None = None) -> dict[str, Any]:
     channels = channels or ["kakao", "kakao", "mail", "calendar"]
-    icon = {"kakao": "💬", "mail": "📧", "calendar": "🗓️"}
+    icon = {"kakao": "💬", "mail": "📧", "calendar": "🗓️", "text": "📝"}
     nodes = [{"id": "intake", "label": "📮 접수 담당", "stage": 0}]
     nodes += [
         {"id": f"collect-{i + 1}", "label": f"{icon.get(ch, '📥')} {CHANNEL_LABEL.get(ch, '수집')} 수집 비서", "stage": 1, "channel": ch}

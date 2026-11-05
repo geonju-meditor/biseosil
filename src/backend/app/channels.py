@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .kakao import CalendarEntry, Message, Room, parse_export
 
 KST = timezone(timedelta(hours=9))
-CHANNEL_LABEL = {"kakao": "카카오톡", "mail": "메일", "calendar": "캘린더"}
+CHANNEL_LABEL = {"kakao": "카카오톡", "mail": "메일", "calendar": "캘린더", "text": "메모"}
 
 _MAIL_START = re.compile(r"^(보낸\s*사람|From)\s*[:：]", re.IGNORECASE)
 _HEADER = re.compile(r"^(?P<key>보낸\s*사람|받는\s*사람|참조|날짜|보낸\s*날짜|제목|From|To|Cc|Date|Sent|Subject)\s*[:：]\s*(?P<value>.*)$", re.IGNORECASE)
@@ -33,7 +33,28 @@ def detect_channel(text: str) -> str:
         return "calendar"
     if any(_MAIL_START.match(line.strip()) for line in head.splitlines()[:20]):
         return "mail"
-    return "kakao"
+    if parse_export(text, 0).messages:
+        return "kakao"
+    return "text"
+
+
+def parse_text(raw: str, index: int, name: str | None = None) -> Room:
+    """어느 형식도 아닌 자유 글(메모). 빈 줄이 아닌 줄 하나를 메시지 하나로 본다."""
+
+    now = datetime.now(KST)
+    room = Room(index=index, name=name or f"메모 {index + 1}", channel="text")
+    for line in raw.replace("\r\n", "\n").replace("\ufeff", "").split("\n"):
+        if line.strip():
+            room.messages.append(
+                Message(
+                    id=f"s{index + 1}-m{len(room.messages) + 1}",
+                    sender="미상",
+                    date=now.date().isoformat(),
+                    time=now.strftime("%H:%M"),
+                    text=line.strip(),
+                )
+            )
+    return room
 
 
 def _parse_mail_date(value: str) -> tuple[str, str] | None:
@@ -185,6 +206,8 @@ def parse_input(text: str, index: int, name: str | None = None, channel: str | N
         return parse_calendar(text, index, name)
     if channel == "mail":
         return parse_mail(text, index, name)
+    if channel == "text":
+        return parse_text(text, index, name)
     room = parse_export(text, index, name)
     room.channel = "kakao"
     return room

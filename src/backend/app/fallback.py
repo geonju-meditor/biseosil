@@ -39,6 +39,7 @@ _DATE_EXPR = re.compile(
     r"(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|오늘|내일|모레|(?:이번\s*주|다음\s*주|다음주|이번주|담주)?\s*[월화수목금토일]요일"
 )
 _DATE_WORDS = {"오늘", "내일", "모레", "이번주", "다음주", "담주", "오전", "오후"}
+_MEMO_TASK = re.compile(r"해야|하기|할\s*것|준비|보내기|작성|제출|정리|챙기|까지")
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
 
 
@@ -47,7 +48,7 @@ def _given(me: str | None) -> str | None:
 
 
 def _to_me(room: Room, message: Message, me: str | None) -> bool:
-    if room.channel == "mail":
+    if room.channel in ("mail", "text"):
         return True
     if not me:
         return False
@@ -141,8 +142,10 @@ def todo(rooms: list[Room], me: str | None, flagged: set[str], ref: str) -> Todo
             result.items.append(
                 TodoItem(title=_clean_title(sentence, me), room=room.name, due=due, due_text=due_text, priority="mid", evidence=_evidence(message, sentence))
             )
-        elif not mine and _to_me(room, message, me) and _REQUEST.search(message.text):
-            sentence = _sentence(message.text, _REQUEST)
+        elif not mine and _to_me(room, message, me) and (
+            _REQUEST.search(message.text) or (room.channel == "text" and _MEMO_TASK.search(message.text))
+        ):
+            sentence = _sentence(message.text, _REQUEST if _REQUEST.search(message.text) else _MEMO_TASK)
             due, due_text = _due(sentence, message.date)
             title = _subject(message) or _clean_title(sentence, me)
             result.items.append(
@@ -235,6 +238,8 @@ def _same_title(a: str, b: str) -> bool:
 def reply(rooms: list[Room], me: str | None, flagged: set[str]) -> ReplyResult:
     result = ReplyResult()
     for room in rooms:
+        if room.channel == "text":
+            continue
         usable = [m for m in room.messages if m.id not in flagged]
         for position, message in enumerate(usable):
             if _is_me(message.sender, me):

@@ -65,6 +65,10 @@ def test_detect_channel():
     assert detect_channel(_read("calendar.ics")) == "calendar"
     assert detect_channel(_read("mail-inbox.txt")) == "mail"
     assert detect_channel(_read("kakao-marketing.txt")) == "kakao"
+    assert detect_channel("내일까지 보고서 부탁해요") == "text"
+    room = parse_input("내일까지 보고서 부탁해요\n\n  회의 준비  ", 0)
+    assert room.channel == "text" and room.name == "메모 1"
+    assert [(m.id, m.sender, m.text) for m in room.messages] == [("s1-m1", "미상", "내일까지 보고서 부탁해요"), ("s1-m2", "미상", "회의 준비")]
 
 
 def test_resolve_korean_date():

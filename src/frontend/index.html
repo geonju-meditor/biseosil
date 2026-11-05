@@ -41,10 +41,11 @@
             <label for="files">파일 <span class="muted">.txt · .eml · .ics · 최대 6개</span></label>
             <input id="files" name="files" type="file" accept=".txt,.eml,.ics,text/plain,message/rfc822,text/calendar" multiple>
           </div>
-          <div class="field">
-            <label for="paste">또는 붙여넣기</label>
-            <textarea id="paste" rows="6" placeholder="카톡 대화 내보내기 내용, 또는 보낸 사람·날짜·제목이 있는 메일"></textarea>
-          </div>
+          <fieldset class="field pastes">
+            <legend>또는 붙여넣기 <span class="muted">채널마다 한 칸 · 파일과 합쳐 최대 6개</span></legend>
+            <div id="pastes"></div>
+            <button id="add-paste" class="btn small" type="button">+ 붙여넣기 추가</button>
+          </fieldset>
           <p class="privacy">원문은 저장하지 않고, 전화번호·이메일·계좌번호는 AI에 보내기 전에 가립니다. 최대 30,000자.</p>
           <button class="btn primary" type="submit">비서실에 맡기기</button>
         </form>

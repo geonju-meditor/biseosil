@@ -44,7 +44,7 @@ FastAPI (Python 3.12, uvicorn) ── Azure Container Apps
 | `src/backend/app/workflow.py` | 워크플로 그래프, 실행기, 검토 로직 |
 | `src/backend/app/agents.py` | 비서 지시문, `GitHubCopilotAgent` 생성, JSON 실행·재시도, 날짜 도구 |
 | `src/backend/app/fallback.py` | 규칙 기반 대체 비서 |
-| `src/backend/app/channels.py` | 메일(붙여넣기·.eml)·캘린더(.ics) 파서. `.ics`의 UTC(`Z`)·`TZID` 시각은 한국 시간으로 변환 |
+| `src/backend/app/channels.py` | 채널 판별, 메일(붙여넣기·.eml)·캘린더(.ics)·메모(자유 글) 파서. `.ics`의 UTC(`Z`)·`TZID` 시각은 한국 시간으로 변환 |
 | `src/backend/app/kakao.py` | 카카오톡 PC·모바일 내보내기 파서 |
 | `src/backend/app/dates.py` | 한국어 날짜 표현 → `YYYY-MM-DD` |
 | `src/backend/app/safety.py` | 개인정보 마스킹, 인젝션 의심 판정 |
@@ -73,7 +73,7 @@ flowchart TD
 | 노드 | 종류 | 입력 → 출력 |
 |---|---|---|
 | intake | 결정적 | 요청 → 입력별 작업 분배 |
-| collect-i | 결정적 | 채널 원문 → 메시지/일정 목록. 채널 판별(카톡·메일·캘린더), 개인정보 마스킹, 인젝션 의심 격리 |
+| collect-i | 결정적 | 채널 원문 → 메시지/일정 목록. 채널 판별(카톡·메일·캘린더·메모), 개인정보 마스킹, 인젝션 의심 격리 |
 | lead | `GitHubCopilotAgent` | 전체 메시지 요약 → `LeadPlan`(요약, 사용자 이름, 출처별 우선순위, 비서별 brief, 주의) |
 | todo | `GitHubCopilotAgent` | 메시지 + brief → `TodoResult`(내 할 일 + 업무 장부: 담당·결정·담당자 없는 일) |
 | schedule | `GitHubCopilotAgent` + 도구 | 메시지 + 기존 일정 + brief → `ScheduleResult`(일정 제안, 충돌) |
@@ -154,13 +154,23 @@ flowchart TD
   "inputs": [
     {"channel": "kakao", "name": "마케팅팀", "text": "…카카오톡 내보내기 원문…"},
     {"channel": "mail", "name": "메일", "text": "보낸 사람: …\n제목: …\n날짜: …\n\n본문"},
-    {"channel": "calendar", "name": "내 캘린더", "text": "BEGIN:VCALENDAR…"}
+    {"channel": "calendar", "name": "내 캘린더", "text": "BEGIN:VCALENDAR…"},
+    {"channel": "text", "label": "붙여넣은 내용 1", "text": "내일까지 보고서 부탁해요"}
   ]
 }
 ```
 
-- `channel`을 생략하면 내용으로 판별한다(`BEGIN:VCALENDAR` → 캘린더, 메일 머리글 → 메일, 그 외 카톡).
-- 검증: 입력 1~6개, 합계 30,000자, 각 입력이 인식 가능한 형식이어야 한다.
+- `channel` 값: `kakao` | `mail` | `calendar` | `text`(메모). 생략하면 `detect_channel`이 내용으로 판별한다.
+  1. 앞부분에 `BEGIN:VCALENDAR`/`BEGIN:VEVENT` → `calendar`
+  2. 처음 20줄 안에 `보낸 사람:`/`From:` 머리글 → `mail`
+  3. 카카오톡 PC·모바일 내보내기 줄 형식으로 메시지가 1개 이상 읽히면 → `kakao`
+  4. 그 외 → `text`. 빈 줄이 아닌 줄마다 메시지(`s{입력}-m{번호}`), 보낸 사람 `미상`, 날짜·시각은 실행 시점 한국 시간.
+     에이전트 지시문에 "메모 출처의 요청·할 일은 '나'에게 온 것"이라고 알린다. 대체 비서는 요청 표현이나
+     "해야/하기/준비/작성/까지" 같은 할 일 표현이 있는 줄을 할 일로 뽑고, 메모에서는 답장 빚을 만들지 않는다.
+- `name`(선택)은 출처 이름, `label`(선택)은 오류 문구에만 쓰는 표시 이름이다. 둘 다 없으면 "붙여넣은 내용 n"으로 부른다.
+- 검증: 입력 1~6개, 합계 30,000자, 각 입력이 인식 가능한 형식(빈 입력이 아님, `channel`을 지정했다면 그 형식)이어야 한다.
+  검증 오류(400/413)는 스트림을 열기 전에 오류 형식으로 응답하고, 화면은 진행판 없이 폼 아래에 문구만 보인다.
+  재시도 버튼은 429/503/500·시간 초과·연결 끊김·취소에서만 보인다.
 
 ### 4.2 AG-UI 이벤트 스트림
 
@@ -189,7 +199,7 @@ flowchart TD
 ### 4.3 오류 형식
 
 ```json
-{"error": {"code": "unrecognized_format", "message": "'2번째 입력'의 형식을 알아보지 못했습니다. …"}}
+{"error": {"code": "unrecognized_format", "message": "'붙여넣은 내용 2'에서 카카오톡 내용을 찾지 못했습니다. …"}}
 ```
 
 | 코드 | 상태 | 상황 |

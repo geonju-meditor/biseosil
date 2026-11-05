@@ -180,7 +180,8 @@ async def workflow_info(inputs: int = 4) -> dict[str, Any]:
 class SourceIn(BaseModel):
     text: str = Field(min_length=1)
     name: str | None = Field(default=None, max_length=100)
-    channel: Literal["kakao", "mail", "calendar"] | None = None
+    channel: Literal["kakao", "mail", "calendar", "text"] | None = None
+    label: str | None = Field(default=None, max_length=100, description="오류 문구에 쓸 표시 이름(선택)")
 
 
 class RunRequest(BaseModel):
@@ -229,19 +230,22 @@ async def run(request: Request, body: RunRequest):
             413, "input_too_long", f"입력이 너무 깁니다. 합계 {settings.max_input_chars:,}자 이하로 줄여 주세요 (현재 {total:,}자)."
         )
     channels: list[str] = []
+    unnamed = 0
     for i, item in enumerate(body.inputs):
+        unnamed += not item.name
         channel = item.channel or detect_channel(item.text)
         channels.append(channel)
         if is_empty(parse_input(item.text, i, item.name, channel)):
-            label = item.name or f"{i + 1}번째 입력"
+            label = item.name or item.label or f"붙여넣은 내용 {unnamed}"
             hint = {
                 "kakao": "카카오톡 '대화 내보내기' txt를 그대로 넣어 주세요.",
                 "mail": "메일은 '보낸 사람/날짜/제목' 머리글이 있는 본문이나 .eml 파일을 넣어 주세요.",
                 "calendar": "캘린더는 BEGIN:VEVENT가 있는 .ics 파일을 넣어 주세요.",
+                "text": "내용을 한 줄 이상 넣어 주세요.",
             }[channel]
             return error(400, "unrecognized_format", f"'{label}'에서 {CHANNEL_LABEL[channel]} 내용을 찾지 못했습니다. {hint}")
     if all(c == "calendar" for c in channels):
-        return error(400, "invalid_request", "캘린더만으로는 분석할 메시지가 없습니다. 카카오톡이나 메일을 함께 넣어 주세요.")
+        return error(400, "invalid_request", "캘린더만으로는 분석할 메시지가 없습니다. 카카오톡·메일·메모를 함께 넣어 주세요.")
     if _rate_limited(_client_ip(request)):
         return error(429, "rate_limited", "요청이 많습니다. 몇 분 뒤에 다시 시도해 주세요.")
     if state.semaphore.locked():

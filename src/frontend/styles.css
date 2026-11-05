@@ -83,6 +83,20 @@ input[type="text"], textarea { font: inherit; padding: 12px 14px; border: 1px so
 input[type="text"]:focus, textarea:focus { border-color: var(--brand); outline: none; }
 input[type="file"] { font: inherit; font-size: .9rem; min-height: 44px; }
 textarea { resize: vertical; }
+.pastes { border: 0; padding: 0; margin: 0; min-width: 0; }
+.pastes legend { font-weight: 600; font-size: .95rem; padding: 0; margin-bottom: 6px; }
+.pastes legend .muted { font-weight: 400; font-size: .85rem; margin-left: 4px; }
+#pastes { display: grid; gap: 12px; }
+.paste { display: grid; gap: 8px; background: #fff; border-radius: 14px; padding: 12px; }
+.paste-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.paste-head label { font-weight: 600; font-size: .9rem; flex: none; }
+.paste-head input[type="text"] { flex: 1 1 120px; width: auto; min-width: 0; padding: 10px 12px; background: var(--soft); }
+.paste textarea { background: var(--soft); }
+.pastes .btn.small, .paste .btn.small { min-height: 44px; }
+#add-paste { justify-self: start; margin-top: 10px; }
+@media (max-width: 480px) { .paste-head label { flex-basis: 100%; } }
+.btn.ghost { background: transparent; color: var(--sub); }
+.btn.ghost:hover { background: var(--soft); }
 .privacy { margin: 0; font-size: .85rem; color: var(--sub); }
 .alert { margin: 16px 0 0; padding: 14px 16px; border-radius: 14px; background: var(--err-soft); color: var(--err); font-weight: 600; }
 #retry-btn { margin-top: 10px; }

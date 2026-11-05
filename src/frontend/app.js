@@ -7,6 +7,7 @@ const AGENTS = {
   "collector-kakao": { emoji: "💬", name: "카톡 수집 비서", role: "대화 내보내기 정리·개인정보 가림·지시문 탐지" },
   "collector-mail": { emoji: "📧", name: "메일 수집 비서", role: "메일 나누기·개인정보 가림·지시문 탐지" },
   "collector-calendar": { emoji: "🗓️", name: "캘린더 수집 비서", role: "기존 일정 읽기(충돌 확인용)" },
+  "collector-text": { emoji: "📝", name: "메모 수집 비서", role: "자유 글을 줄 단위로 정리·개인정보 가림·지시문 탐지" },
   lead: { emoji: "🧭", name: "팀장", role: "우선순위·작업 지시" },
   todo: { emoji: "✅", name: "할 일 비서", role: "내 할 일 + 업무 장부(누가 뭘 맡았나)" },
   schedule: { emoji: "📅", name: "일정 비서", role: "날짜 계산 도구로 일정 정리" },
@@ -43,14 +44,43 @@ $("#run-form").addEventListener("submit", async (e) => {
   const files = [...$("#files").files];
   if (files.length > 6) return showFormError("파일은 한 번에 6개까지 넣을 수 있습니다.");
   for (const f of files) inputs.push({ text: await f.text(), name: f.name.replace(/\.(txt|eml|ics)$/i, "") });
-  const pasted = $("#paste").value.trim();
-  if (pasted) inputs.push({ text: pasted, name: null });
-  if (!inputs.length) return showFormError("파일을 고르거나 대화·메일을 붙여넣어 주세요.");
-  if (inputs.length > 6) return showFormError("입력은 한 번에 6개까지 넣을 수 있습니다.");
+  document.querySelectorAll("#pastes .paste").forEach((box, i) => {
+    const text = $("textarea", box).value.trim();
+    if (text) inputs.push({ text, name: $("input", box).value.trim() || null, label: `붙여넣은 내용 ${i + 1}` });
+  });
+  if (!inputs.length) return showFormError("파일을 고르거나 대화·메일·메모를 붙여넣어 주세요.");
+  if (inputs.length > MAX_INPUTS) return showFormError(`파일과 붙여넣기를 합쳐 ${MAX_INPUTS}개까지 넣을 수 있습니다 (지금 ${inputs.length}개).`);
   const total = inputs.reduce((n, r) => n + r.text.length, 0);
   if (total > 30000) return showFormError(`입력이 너무 깁니다. 합계 30,000자 이하로 줄여 주세요 (현재 ${total.toLocaleString()}자).`);
   await run({ me: $("#me").value.trim() || null, inputs });
 });
+
+const MAX_INPUTS = 6;
+function addPaste() {
+  const box = document.createElement("div");
+  box.className = "paste";
+  box.innerHTML = `<div class="paste-head"><label></label><input type="text" maxlength="40" autocomplete="off" placeholder="이름 (선택) · 예: 팀 단톡방"><button class="btn small ghost" type="button">삭제</button></div>
+    <textarea rows="5" placeholder="카톡 대화 내보내기, 보낸 사람·날짜·제목이 있는 메일, 또는 자유롭게 쓴 메모"></textarea>`;
+  $("button", box).addEventListener("click", () => { box.remove(); renumberPastes(); $("#pastes .paste:last-child textarea")?.focus(); });
+  $("#pastes").append(box);
+  renumberPastes();
+  return box;
+}
+function renumberPastes() {
+  const boxes = [...document.querySelectorAll("#pastes .paste")];
+  boxes.forEach((box, i) => {
+    const n = i + 1, label = $("label", box), ta = $("textarea", box), name = $("input", box);
+    ta.id = `paste-${n}`; name.id = `paste-name-${n}`;
+    label.htmlFor = ta.id; label.textContent = `붙여넣은 내용 ${n}`;
+    name.setAttribute("aria-label", `붙여넣은 내용 ${n} 이름`);
+    $("button", box).setAttribute("aria-label", `붙여넣은 내용 ${n} 삭제`);
+    $("button", box).hidden = boxes.length === 1;
+  });
+  $("#add-paste").disabled = boxes.length >= MAX_INPUTS;
+  $("#add-paste").textContent = boxes.length >= MAX_INPUTS ? "최대 6칸" : "+ 붙여넣기 추가";
+}
+addPaste();
+$("#add-paste").addEventListener("click", () => $("textarea", addPaste()).focus());
 
 $("#restart-btn").addEventListener("click", () => {
   $("#result-section").hidden = true;
@@ -83,9 +113,6 @@ async function run(payload) {
   $("#log").innerHTML = "";
   $("#talk").innerHTML = "";
   $("#talk-wrap").hidden = true;
-  $("#board-section").hidden = false;
-  $("#board-section").scrollIntoView({ behavior: "smooth", block: "start" });
-  startTimer();
   try {
     const res = await fetch("/api/run", {
       method: "POST",
@@ -96,8 +123,13 @@ async function run(payload) {
     if (!res.ok) {
       let msg = "요청을 처리하지 못했습니다.";
       try { msg = (await res.json()).error.message; } catch { /* keep default */ }
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.invalid = [400, 413, 422].includes(res.status);
+      throw err;
     }
+    $("#board-section").hidden = false;
+    $("#board-section").scrollIntoView({ behavior: "smooth", block: "start" });
+    startTimer();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -122,8 +154,14 @@ async function run(payload) {
   } catch (err) {
     $("#intro").hidden = false;
     const cancelled = err.name === "AbortError";
-    showFormError(cancelled ? "분석을 취소했습니다." : `⚠️ ${err.message || "문제가 생겼습니다."}`, true);
-    $("#board-status").textContent = "작업이 중단되었습니다.";
+    if (err.invalid) {
+      $("#board-section").hidden = true;
+      $("#own-input").open = true;
+      showFormError(`⚠️ ${err.message}`);
+    } else {
+      showFormError(cancelled ? "분석을 취소했습니다." : `⚠️ ${err.message || "문제가 생겼습니다."}`, true);
+      $("#board-status").textContent = "작업이 중단되었습니다.";
+    }
     $("#form-error").scrollIntoView({ behavior: "smooth", block: "center" });
   } finally {
     stopTimer();
