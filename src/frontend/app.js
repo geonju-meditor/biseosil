@@ -4,26 +4,30 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const AGENTS = {
   intake: { emoji: "🧭", name: "팀장", role: "입력 접수·분배" },
   collector: { emoji: "📥", name: "수집 비서", role: "메시지 정리·개인정보 가림·지시문 탐지" },
+  "collector-kakao": { emoji: "💬", name: "카톡 수집 비서", role: "대화 내보내기 정리·개인정보 가림·지시문 탐지" },
+  "collector-mail": { emoji: "📧", name: "메일 수집 비서", role: "메일 나누기·개인정보 가림·지시문 탐지" },
+  "collector-calendar": { emoji: "🗓️", name: "캘린더 수집 비서", role: "기존 일정 읽기(충돌 확인용)" },
   lead: { emoji: "🧭", name: "팀장", role: "우선순위·작업 지시" },
-  todo: { emoji: "✅", name: "할 일 비서", role: "내 할 일만 추출" },
+  todo: { emoji: "✅", name: "할 일 비서", role: "내 할 일 + 업무 장부(누가 뭘 맡았나)" },
   schedule: { emoji: "📅", name: "일정 비서", role: "날짜 계산 도구로 일정 정리" },
   reply: { emoji: "✉️", name: "답장 비서", role: "답장 빚·초안" },
-  ledger: { emoji: "📒", name: "장부 비서", role: "누가 뭘 맡았나·결정 사항" },
   review: { emoji: "🔍", name: "검토 비서", role: "근거 확인·중복 제거·충돌 계산" },
 };
+const CHANNEL = { kakao: "카카오톡", mail: "메일", calendar: "캘린더" };
 const STATUS_TEXT = { wait: "대기", start: "작업 중", done: "완료", error: "오류", retry: "다시 시도" };
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
 
 let result = null;
 let timerHandle = null;
 let running = false;
+const toolCalls = {};
 
 // ---------- 입력 ----------
 $("#sample-btn").addEventListener("click", async () => {
   try {
     const res = await fetch("/api/samples");
     const data = await res.json();
-    await run({ me: data.me, rooms: data.samples.map((s) => ({ text: s.text, name: null })) });
+    await run({ me: data.me, inputs: data.samples.map((s) => ({ text: s.text, name: s.name, channel: s.channel })) });
   } catch {
     showFormError("샘플을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.");
   }
@@ -31,15 +35,17 @@ $("#sample-btn").addEventListener("click", async () => {
 
 $("#run-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const rooms = [];
-  const files = [...$("#files").files].slice(0, 5);
-  for (const f of files) rooms.push({ text: await f.text(), name: f.name.replace(/\.txt$/i, "") });
+  const inputs = [];
+  const files = [...$("#files").files];
+  if (files.length > 6) return showFormError("파일은 한 번에 6개까지 넣을 수 있습니다.");
+  for (const f of files) inputs.push({ text: await f.text(), name: f.name.replace(/\.(txt|eml|ics)$/i, "") });
   const pasted = $("#paste").value.trim();
-  if (pasted) rooms.push({ text: pasted, name: null });
-  if (!rooms.length) return showFormError("파일을 고르거나 대화를 붙여넣어 주세요.");
-  const total = rooms.reduce((n, r) => n + r.text.length, 0);
+  if (pasted) inputs.push({ text: pasted, name: null });
+  if (!inputs.length) return showFormError("파일을 고르거나 대화·메일을 붙여넣어 주세요.");
+  if (inputs.length > 6) return showFormError("입력은 한 번에 6개까지 넣을 수 있습니다.");
+  const total = inputs.reduce((n, r) => n + r.text.length, 0);
   if (total > 30000) return showFormError(`입력이 너무 깁니다. 합계 30,000자 이하로 줄여 주세요 (현재 ${total.toLocaleString()}자).`);
-  await run({ me: $("#me").value.trim() || null, rooms });
+  await run({ me: $("#me").value.trim() || null, inputs });
 });
 
 $("#restart-btn").addEventListener("click", () => {
@@ -93,9 +99,9 @@ async function run(payload) {
         const line = chunk.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         const ev = JSON.parse(line.slice(6));
-        if (ev.agent === "system" && ev.status === "result") { gotResult = true; showResult(ev.data); }
-        else if (ev.agent === "system" && ev.status === "error") throw new Error(ev.data.message);
-        else handleEvent(ev);
+        if (ev.type === "RUN_ERROR") throw new Error(ev.message);
+        if (ev.type === "CUSTOM" && ev.name === "workflow.result") { gotResult = true; showResult(ev.value); }
+        else handleAgUi(ev);
       }
     }
     if (!gotResult) throw new Error("연결이 끊겼습니다. 다시 시도해 주세요.");
@@ -127,10 +133,31 @@ function startTimer() {
 function stopTimer() { clearInterval(timerHandle); }
 
 // ---------- 작업 보드 ----------
-function nodeId(ev) {
-  if (ev.agent === "lead") return ev.data && ev.data.step === "접수" ? "intake" : "lead";
-  if (ev.agent === "collector") return `collect-${(ev.data?.index ?? 0) + 1}`;
-  return ev.agent;
+// AG-UI 이벤트(RUN_*, STEP_*, CUSTOM, TOOL_CALL_*)를 진행판에 반영한다.
+function handleAgUi(ev) {
+  switch (ev.type) {
+    case "CUSTOM":
+      if (ev.name === "workflow.graph") buildBoard(ev.value);
+      else if (ev.name === "agent.progress") handleEvent(ev.value);
+      break;
+    case "TOOL_CALL_START":
+      toolCalls[ev.toolCallId] = { name: ev.toolCallName, node: ev.parentMessageId, args: "" };
+      break;
+    case "TOOL_CALL_ARGS":
+      if (toolCalls[ev.toolCallId]) toolCalls[ev.toolCallId].args += ev.delta;
+      break;
+    case "TOOL_CALL_RESULT": {
+      const call = toolCalls[ev.toolCallId];
+      if (!call) break;
+      let args = {};
+      try { args = JSON.parse(call.args); } catch { /* ignore */ }
+      handleEvent({ node: call.node, status: "tool", data: { tool: call.name, input: args.expression, output: ev.content } });
+      break;
+    }
+    case "RUN_FINISHED":
+      $("#board-status").textContent = "모든 비서가 작업을 마쳤습니다.";
+      break;
+  }
 }
 
 function buildBoard(graph) {
@@ -144,20 +171,21 @@ function buildBoard(graph) {
     li.className = "stage";
     li.innerHTML = `<p class="stage-name">${esc(stageNames[s] || "")}</p><div class="stage-cards"></div>`;
     for (const n of stages[s]) {
-      const kind = n.id.startsWith("collect-") ? "collector" : n.id;
+      const kind = n.id.startsWith("collect-") ? `collector-${n.channel || "kakao"}` : n.id;
       const a = AGENTS[kind];
       const card = document.createElement("article");
       card.className = "agent wait";
       card.id = `node-${n.id}`;
       card.innerHTML = `
         <header><span class="emoji" aria-hidden="true">${a.emoji}</span>
-          <div><h3>${esc(n.id.startsWith("collect-") ? `수집 비서 #${n.id.split("-")[1]}` : a.name)}</h3><p class="role">${esc(a.role)}</p></div>
+          <div><h3>${esc(n.id.startsWith("collect-") ? `${a.name} #${n.id.split("-")[1]}` : a.name)}</h3><p class="role">${esc(a.role)}</p></div>
           <span class="pill">${STATUS_TEXT.wait}</span></header>
         <p class="detail"></p><ul class="tools"></ul><pre class="tail" hidden></pre>`;
       li.querySelector(".stage-cards").append(card);
     }
     board.append(li);
   });
+  $("#mode-badge").hidden = graph.mode !== "deterministic";
 }
 
 function setStatus(card, status) {
@@ -173,8 +201,7 @@ function log(text) {
 }
 
 function handleEvent(ev) {
-  if (ev.agent === "system" && ev.status === "start") { buildBoard(ev.data.graph); return; }
-  const id = nodeId(ev);
+  const id = ev.node;
   if (ev.agent === "collector" && ev.status === "start") {
     const intake = document.getElementById("node-intake");
     if (intake && !intake.classList.contains("done")) { setStatus(intake, "done"); $(".detail", intake).textContent += " 분배 완료."; }
@@ -188,9 +215,9 @@ function handleEvent(ev) {
   switch (ev.status) {
     case "start":
       setStatus(card, "start");
-      if (id === "intake") detail.textContent = `대화방 ${d.rooms}개를 받아 수집 비서에게 나눠 줍니다.`;
+      if (id === "intake") detail.textContent = `입력 ${d.inputs}개를 받아 채널별 수집 비서에게 나눠 줍니다.`;
       else if (id === "lead") detail.textContent = `'${d.me || "나"}' 기준, ${d.reference_date} 시점으로 전체를 훑는 중…`;
-      else if (ev.agent === "collector") detail.textContent = `'${d.room}' 정리 중…`;
+      else if (ev.agent === "collector") detail.textContent = `${CHANNEL[d.channel] || ""} '${d.room}' 정리 중…`;
       else if (d.brief) detail.textContent = `팀장 지시: ${d.brief}`;
       else detail.textContent = "작업 중…";
       $("#board-status").textContent = `${name} 작업 시작`;
@@ -216,10 +243,12 @@ function handleEvent(ev) {
     case "done":
       setStatus(card, "done");
       tail.hidden = true;
-      if (id === "intake") break;
+      if (id === "intake") { detail.textContent += " 분배 완료."; break; }
       if (ev.agent === "collector") {
         const pii = Object.values(d.pii || {}).reduce((a, b) => a + b, 0);
-        detail.innerHTML = `'${esc(d.room)}' 메시지 ${d.messages}개 · 참여자 ${d.participants.length}명`
+        detail.innerHTML = (d.channel === "calendar"
+          ? `'${esc(d.room)}' 기존 일정 ${d.events}개 (충돌 확인용)`
+          : `'${esc(d.room)}' ${d.channel === "mail" ? "메일" : "메시지"} ${d.messages}개 · 보낸 사람 ${d.participants.length}명`)
           + (pii ? ` · <span class="tag">개인정보 ${pii}건 가림</span>` : "")
           + (d.flagged.length ? ` · <span class="tag warn">🛡️ 지시문 의심 ${d.flagged.length}건 격리</span>` : "");
       } else if (id === "lead") {
@@ -273,8 +302,9 @@ function showResult(data) {
     <div class="stat"><b>${s.manualMin}분</b><span>직접 읽고 정리하면 (추정)</span></div>
     <div class="stat arrow" aria-hidden="true">→</div>
     <div class="stat good"><b>${s.elapsedSec}초</b><span>비서실 처리 시간</span></div>
-    <div class="stat"><b>${s.messages}개</b><span>읽은 메시지 · ${data.rooms.length}개 방</span></div>
+    <div class="stat"><b>${s.messages}개</b><span>읽은 메시지·메일 · 출처 ${data.inputs.length}곳</span></div>
     <p class="muted small formula">추정식: ${esc(s.formula)}</p>`;
+  $("#result-mode").hidden = data.mode !== "deterministic";
   const lead = data.lead;
   $("#summary").innerHTML = lead
     ? `<p><b>🧭 팀장 요약 (${esc(data.me || "나")} 기준 · ${fmtDate(data.referenceDate)})</b></p><p>${esc(lead.summary)}</p>`
@@ -299,7 +329,7 @@ function renderAll() {
   const counts = {
     todos: result.todos.length, events: result.events.length,
     replies: result.replies.length, ledger: result.ledger.assignments.length + result.ledger.decisions.length,
-    review: result.review.removed.length + result.rooms.reduce((n, r) => n + r.flagged.length, 0),
+    review: result.review.removed.length + result.inputs.reduce((n, r) => n + r.flagged.length, 0),
   };
   for (const [k, v] of Object.entries(counts)) $(`[data-count="${k}"]`).textContent = v;
 }
@@ -351,7 +381,7 @@ function renderReplies() {
       <div class="cta-row"><button class="btn small" data-act="copy-draft" data-i="${r.i}">📋 복사</button>
         ${r.direction === "i_owe" && !r.sent ? `<button class="btn small" data-act="mark-sent" data-i="${r.i}">✔ 답장했어요</button>` : ""}</div>` : ""}
     </li>`;
-  pane.innerHTML = `<p class="muted small">비서실은 메시지를 직접 보내지 않습니다. 초안을 고친 뒤 복사해서 카카오톡에 붙여넣으세요.</p>
+  pane.innerHTML = `<p class="muted small">비서실은 메시지를 직접 보내지 않습니다. 초안을 고친 뒤 복사해서 카카오톡이나 메일에 붙여넣으세요.</p>
     <h3 class="group">내가 답해야 할 것 (${mine.length})</h3>${mine.length ? `<ul class="items">${mine.map(card).join("")}</ul>` : `<p class="empty">없음</p>`}
     <h3 class="group">내가 받아야 할 것 (${theirs.length})</h3>${theirs.length ? `<ul class="items">${theirs.map(card).join("")}</ul>` : `<p class="empty">없음</p>`}`;
 }
@@ -372,8 +402,8 @@ function renderLedger() {
 
 function renderReview() {
   const pane = $("#pane-review");
-  const flagged = result.rooms.flatMap((r) => r.flagged.map((id) => ({ id, ...(result.source?.[id] || {}) })));
-  const pii = result.rooms.reduce((n, r) => n + Object.values(r.pii).reduce((a, b) => a + b, 0), 0);
+  const flagged = result.inputs.flatMap((r) => r.flagged.map((id) => ({ id, ...(result.source?.[id] || {}) })));
+  const pii = result.inputs.reduce((n, r) => n + Object.values(r.pii).reduce((a, b) => a + b, 0), 0);
   pane.innerHTML = `
     <p>검토 비서는 모든 항목의 인용문을 원문과 대조해, 근거가 없거나 지시문 의심 메시지에서 나온 항목을 뺐습니다.</p>
     <h3 class="group">🛡️ 지시문 의심 메시지 (${flagged.length})</h3>

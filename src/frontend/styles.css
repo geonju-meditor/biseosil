@@ -96,6 +96,7 @@ textarea { resize: vertical; }
 
 .badge { font-size: .8rem; padding: 3px 10px; border-radius: 999px; font-weight: 700; }
 .badge.ai { background: #fff1c2; color: #6b4e00; border: 1px solid #f0d47a; }
+.badge.warn { background: #ffe1d6; color: #8a2b00; border: 1px solid #f2a385; }
 .badge.small { font-size: .7rem; padding: 1px 6px; }
 .stats { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
 .stat { display: grid; padding: 10px 16px; border-radius: 12px; background: #f3f2ee; min-width: 120px; }

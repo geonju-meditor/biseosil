@@ -6,10 +6,11 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,10 +19,28 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ag_ui.core import (
+    BaseEvent,
+    CustomEvent,
+    EventType,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
+
+from .channels import CHANNEL_LABEL, detect_channel, is_empty, parse_input
 from .config import get_settings
 from .ics import IcsEvent, build_ics
-from .kakao import parse_export
-from .workflow import RawRoom, RunInput, Runtime, build_workflow, workflow_graph
+from .workflow import RawInput, RunInput, Runtime, build_workflow, workflow_graph
 
 logger = logging.getLogger("biseosil")
 settings = get_settings()
@@ -32,11 +51,13 @@ FRONTEND_DIR = next(
     (p for p in (BACKEND_DIR / "frontend", BACKEND_DIR.parent / "frontend") if p.is_dir()),
     BACKEND_DIR / "frontend",
 )
-SAMPLE_INFO = {
-    "team-project.txt": "경영정보시스템 팀플 4조 (PC 내보내기)",
-    "club-staff.txt": "사진동아리 빛담 운영진 (모바일 내보내기)",
-    "dept-notice.txt": "경영학과 25학번 공지방 (지시문 끼워넣기 시도 포함)",
-}
+SAMPLE_ME = "김하늘"
+SAMPLE_INFO = [
+    ("kakao-marketing.txt", "kakao", "마케팅팀 업무방", "카카오톡 PC 내보내기"),
+    ("kakao-launch-tf.txt", "kakao", "신제품 런칭 TF", "카카오톡 모바일 내보내기 · 지시문 끼워넣기 포함"),
+    ("mail-inbox.txt", "mail", "받은 메일함", "업무 메일 4통 붙여넣기 · 스팸 지시문 포함"),
+    ("calendar.ics", "calendar", "내 캘린더", "기존 일정 .ics"),
+]
 SECONDS_PER_MESSAGE = 6
 SECONDS_PER_ITEM = 45
 
@@ -104,7 +125,7 @@ async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-    return error(422, "invalid_request", "입력 형식이 올바르지 않습니다.")
+    return error(400, "invalid_request", "입력 형식이 올바르지 않습니다.")
 
 
 @app.exception_handler(Exception)
@@ -131,104 +152,162 @@ def _rate_limited(ip: str) -> bool:
     return False
 
 
+def _runtime() -> Runtime:
+    return Runtime(state.client, settings.copilot_model, settings.agent_provider)
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "copilot": state.client is not None}
+    return {"status": "ok", "copilot": state.client is not None, "provider": _runtime().mode}
 
 
 @app.get("/api/samples")
 async def samples() -> dict[str, Any]:
     items = []
-    for name, label in SAMPLE_INFO.items():
-        path = SAMPLES_DIR / name
+    for file, channel, name, label in SAMPLE_INFO:
+        path = SAMPLES_DIR / file
         if path.exists():
-            items.append({"file": name, "label": label, "text": path.read_text(encoding="utf-8")})
-    return {"me": "이지은", "samples": items}
+            items.append({"file": file, "channel": channel, "name": name, "label": label, "text": path.read_text(encoding="utf-8")})
+    return {"me": SAMPLE_ME, "samples": items}
 
 
 @app.get("/api/workflow")
-async def workflow_info(rooms: int = 3) -> dict[str, Any]:
-    return workflow_graph(max(1, min(rooms, settings.max_rooms)))
+async def workflow_info(inputs: int = 4) -> dict[str, Any]:
+    count = max(1, min(inputs, settings.max_inputs))
+    return workflow_graph(["kakao"] * count)
 
 
-class RoomIn(BaseModel):
+class SourceIn(BaseModel):
     text: str = Field(min_length=1)
     name: str | None = Field(default=None, max_length=100)
+    channel: Literal["kakao", "mail", "calendar"] | None = None
 
 
 class RunRequest(BaseModel):
-    rooms: list[RoomIn] = Field(min_length=1)
+    inputs: list[SourceIn] = Field(min_length=1)
     me: str | None = Field(default=None, max_length=40)
 
 
-def _sse(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+def _sse(event: BaseEvent) -> bytes:
+    return f"data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n".encode()
+
+
+def _progress_events(data: dict[str, Any]) -> list[BaseEvent]:
+    """워크플로 진행 이벤트를 AG-UI 이벤트로 바꾼다."""
+
+    node, status = data["node"], data["status"]
+    if status == "tool":
+        call_id = f"tool-{uuid.uuid4().hex[:8]}"
+        tool = data["data"]
+        args = {"expression": tool["input"], "reference_date": tool["reference"]}
+
+
+        return [
+            ToolCallStartEvent(type=EventType.TOOL_CALL_START, tool_call_id=call_id, tool_call_name=tool["tool"], parent_message_id=node),
+            ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=call_id, delta=json.dumps(args, ensure_ascii=False)),
+            ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id),
+            ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT, message_id=f"{call_id}-result", tool_call_id=call_id, content=tool["output"], role="tool"
+            ),
+        ]
+    events: list[BaseEvent] = []
+    if status == "start":
+        events.append(StepStartedEvent(type=EventType.STEP_STARTED, step_name=node))
+    events.append(CustomEvent(type=EventType.CUSTOM, name="agent.progress", value=data))
+    if status in ("done", "error"):
+        events.append(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=node))
+    return events
 
 
 @app.post("/api/run")
 async def run(request: Request, body: RunRequest):
-    if len(body.rooms) > settings.max_rooms:
-        return error(400, "too_many_rooms", f"대화방은 한 번에 {settings.max_rooms}개까지 넣을 수 있습니다.")
-    total = sum(len(r.text) for r in body.rooms)
+    if len(body.inputs) > settings.max_inputs:
+        return error(400, "too_many_inputs", f"입력은 한 번에 {settings.max_inputs}개까지 넣을 수 있습니다.")
+    total = sum(len(i.text) for i in body.inputs)
     if total > settings.max_input_chars:
         return error(
             413, "input_too_long", f"입력이 너무 깁니다. 합계 {settings.max_input_chars:,}자 이하로 줄여 주세요 (현재 {total:,}자)."
         )
-    for i, room in enumerate(body.rooms):
-        if not parse_export(room.text, i, room.name).messages:
-            label = room.name or f"{i + 1}번째 입력"
-            return error(
-                400,
-                "unrecognized_format",
-                f"'{label}'에서 카카오톡 대화를 찾지 못했습니다. 카카오톡 '대화 내보내기' txt를 그대로 넣어 주세요.",
-            )
-    if state.client is None:
-        return error(503, "ai_unavailable", "AI 연결이 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.")
+    channels: list[str] = []
+    for i, item in enumerate(body.inputs):
+        channel = item.channel or detect_channel(item.text)
+        channels.append(channel)
+        if is_empty(parse_input(item.text, i, item.name, channel)):
+            label = item.name or f"{i + 1}번째 입력"
+            hint = {
+                "kakao": "카카오톡 '대화 내보내기' txt를 그대로 넣어 주세요.",
+                "mail": "메일은 '보낸 사람/날짜/제목' 머리글이 있는 본문이나 .eml 파일을 넣어 주세요.",
+                "calendar": "캘린더는 BEGIN:VEVENT가 있는 .ics 파일을 넣어 주세요.",
+            }[channel]
+            return error(400, "unrecognized_format", f"'{label}'에서 {CHANNEL_LABEL[channel]} 내용을 찾지 못했습니다. {hint}")
+    if all(c == "calendar" for c in channels):
+        return error(400, "invalid_request", "캘린더만으로는 분석할 메시지가 없습니다. 카카오톡이나 메일을 함께 넣어 주세요.")
     if _rate_limited(_client_ip(request)):
         return error(429, "rate_limited", "요청이 많습니다. 몇 분 뒤에 다시 시도해 주세요.")
     if state.semaphore.locked():
         return error(503, "busy", "지금 다른 분석이 많이 진행 중입니다. 잠시 후 다시 시도해 주세요.")
 
-    run_input = RunInput(rooms=[RawRoom(text=r.text, name=r.name) for r in body.rooms], me=(body.me or "").strip() or None)
-    workflow = build_workflow(Runtime(state.client, settings.copilot_model), len(run_input.rooms))
+    run_input = RunInput(
+        inputs=[RawInput(text=i.text, name=i.name, channel=c) for i, c in zip(body.inputs, channels, strict=True)],
+        me=(body.me or "").strip() or None,
+    )
+    runtime = _runtime()
+    workflow = build_workflow(runtime, len(run_input.inputs))
+    thread_id, run_id = f"thread-{uuid.uuid4().hex[:12]}", f"run-{uuid.uuid4().hex[:12]}"
+
+    def fail(code: str, message: str) -> bytes:
+        return _sse(RunErrorEvent(type=EventType.RUN_ERROR, code=code, message=message))
 
     async def stream():
         async with state.semaphore:
             started = time.monotonic()
-            yield _sse({"agent": "system", "status": "start", "data": {"graph": workflow_graph(len(run_input.rooms))}})
+            yield _sse(RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id))
+            graph = workflow_graph(channels) | {"mode": runtime.mode}
+            yield _sse(CustomEvent(type=EventType.CUSTOM, name="workflow.graph", value=graph))
             output: dict[str, Any] | None = None
             try:
                 async with asyncio.timeout(settings.run_timeout_sec):
                     async for ev in workflow.run(run_input, stream=True):
                         if ev.type == "progress":
-                            yield _sse(ev.data)
+                            for event in _progress_events(ev.data):
+                                yield _sse(event)
                         elif ev.type == "output":
                             output = ev.data
                         elif ev.type in ("executor_failed", "failed", "error"):
                             logger.warning("workflow event %s from %s", ev.type, getattr(ev, "executor_id", None))
             except TimeoutError:
-                yield _sse({"agent": "system", "status": "error", "data": {"code": "timeout", "message": "분석 시간이 너무 오래 걸려 멈췄습니다. 대화방 수를 줄여 다시 시도해 주세요."}})
+                yield fail("timeout", "분석 시간이 너무 오래 걸려 멈췄습니다. 입력 수를 줄여 다시 시도해 주세요.")
                 return
             except Exception:  # noqa: BLE001
                 logger.exception("워크플로 실행 실패")
-                yield _sse({"agent": "system", "status": "error", "data": {"code": "workflow_failed", "message": "분석 중 문제가 생겼습니다. 다시 시도해 주세요."}})
+                yield fail("workflow_failed", "분석 중 문제가 생겼습니다. 다시 시도해 주세요.")
                 return
             if output is None:
-                yield _sse({"agent": "system", "status": "error", "data": {"code": "no_result", "message": "결과를 만들지 못했습니다. 다시 시도해 주세요."}})
+                yield fail("no_result", "결과를 만들지 못했습니다. 다시 시도해 주세요.")
                 return
             elapsed = time.monotonic() - started
-            messages = sum(r["messages"] for r in output["rooms"])
+            messages = sum(i["messages"] for i in output["inputs"])
             items = len(output["todos"]) + len(output["events"]) + len(output["replies"])
             manual_sec = messages * SECONDS_PER_MESSAGE + items * SECONDS_PER_ITEM
-            output["stats"] = {
+            stats = {
                 "elapsedSec": round(elapsed, 1),
                 "messages": messages,
                 "items": items,
                 "manualMin": round(manual_sec / 60),
                 "formula": f"메시지 {messages}개×{SECONDS_PER_MESSAGE}초 + 항목 {items}개×{SECONDS_PER_ITEM}초",
             }
-            logger.info("run done rooms=%d messages=%d items=%d elapsed=%.1f", len(output["rooms"]), messages, items, elapsed)
-            yield _sse({"agent": "system", "status": "result", "data": output})
+            output["stats"] = stats
+            logger.info(
+                "run done mode=%s inputs=%d messages=%d items=%d elapsed=%.1f",
+                output["mode"], len(output["inputs"]), messages, items, elapsed,
+            )
+            yield _sse(CustomEvent(type=EventType.CUSTOM, name="workflow.result", value=output))
+            if output.get("lead") and output["lead"].get("summary"):
+                message_id = f"msg-{uuid.uuid4().hex[:8]}"
+                yield _sse(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"))
+                yield _sse(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=output["lead"]["summary"]))
+                yield _sse(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            yield _sse(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id, result={"stats": stats}))
 
     return StreamingResponse(
         stream(),

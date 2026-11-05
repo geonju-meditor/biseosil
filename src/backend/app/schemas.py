@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class Evidence(BaseModel):
-    message_id: str = Field(description="근거 메시지 ID (예: r1-m3)")
+    message_id: str = Field(description="근거 메시지 ID (예: s1-m3)")
     quote: str = Field(description="해당 메시지에서 그대로 옮긴 짧은 인용")
     # 검토 비서가 원문에서 채운다
     room: str | None = None
@@ -31,7 +31,6 @@ class LeadPlan(BaseModel):
     todo_brief: str = ""
     schedule_brief: str = ""
     reply_brief: str = ""
-    ledger_brief: str = ""
     warnings: list[str] = []
 
 
@@ -45,7 +44,12 @@ class TodoItem(BaseModel):
 
 
 class TodoResult(BaseModel):
+    """할 일 비서 결과: 내 할 일 + 팀 업무 장부(담당·결정·담당자 없는 일)."""
+
     items: list[TodoItem] = []
+    assignments: list["Assignment"] = []
+    decisions: list["Decision"] = []
+    open_questions: list[str] = Field(default=[], description="아직 아무도 정하지 않은 결정·담당")
 
 
 class ScheduleEvent(BaseModel):
@@ -91,7 +95,4 @@ class Decision(BaseModel):
     evidence: Evidence
 
 
-class LedgerResult(BaseModel):
-    assignments: list[Assignment] = []
-    decisions: list[Decision] = []
-    open_questions: list[str] = Field(default=[], description="아직 아무도 정하지 않은 결정·담당")
+TodoResult.model_rebuild()

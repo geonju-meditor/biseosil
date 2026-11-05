@@ -9,11 +9,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     copilot_model: str = ""
+    agent_provider: str = "copilot"  # copilot | deterministic
     copilot_cli_path: str | None = None
     applicationinsights_connection_string: str | None = None
 
     max_input_chars: int = 30_000
-    max_rooms: int = 5
+    max_inputs: int = 6
     max_concurrent_runs: int = 4
     rate_limit_runs: int = 8
     rate_limit_window_sec: int = 600

@@ -1,26 +1,27 @@
 from pathlib import Path
 
+from app.channels import detect_channel, parse_calendar, parse_input, parse_mail
 from app.dates import resolve_korean_date
 from app.ics import IcsEvent, build_ics
 from app.kakao import guess_me, parse_export
 from app.safety import looks_like_injection, mask_pii
-from app.workflow import evidence_matches
+from app.workflow import calendar_conflict, evidence_matches
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
 
-def _rooms():
-    return [parse_export(p.read_text(encoding="utf-8"), i) for i, p in enumerate(sorted(SAMPLES.glob("*.txt")))]
+def _read(name: str) -> str:
+    return (SAMPLES / name).read_text(encoding="utf-8")
 
 
-def test_parse_pc_and_mobile_formats():
-    rooms = {r.name: r for r in _rooms()}
-    team = rooms["경영정보시스템 팀플 4조"]
-    club = rooms["사진동아리 빛담 운영진"]
-    assert len(team.messages) == 18
-    assert len(club.messages) == 12
-    assert team.messages[0].date.startswith("2026-11-")
-    assert "이지은" in team.participants and "이지은" in club.participants
+def test_parse_pc_and_mobile_kakao():
+    pc = parse_export(_read("kakao-marketing.txt"), 0)
+    mobile = parse_export(_read("kakao-launch-tf.txt"), 1)
+    assert pc.name == "마케팅팀 업무방" and len(pc.messages) == 12
+    assert mobile.name == "신제품 런칭 TF" and len(mobile.messages) == 7
+    assert pc.messages[1].id == "s1-m2" and pc.messages[1].date == "2026-11-03" and pc.messages[1].time == "09:13"
+    assert mobile.messages[0].id == "s2-m1" and mobile.messages[3].time == "13:20"
+    assert "김하늘" in pc.participants and "김하늘" in mobile.participants
 
 
 def test_parse_rejects_non_kakao_text():
@@ -28,8 +29,42 @@ def test_parse_rejects_non_kakao_text():
 
 
 def test_guess_me_from_shared_rooms():
-    assert guess_me(_rooms(), None) == "이지은"
-    assert guess_me(_rooms(), " 김민수 ") == "김민수"
+    rooms = [parse_export(_read("kakao-marketing.txt"), 0), parse_export(_read("kakao-launch-tf.txt"), 1)]
+    assert guess_me(rooms, None) == "김하늘"
+    assert guess_me(rooms, " 박지훈 ") == "박지훈"
+
+
+def test_parse_pasted_mail_and_eml():
+    room = parse_mail(_read("mail-inbox.txt"), 2, "받은 메일함")
+    assert room.channel == "mail" and len(room.messages) == 4
+    first = room.messages[0]
+    assert first.id == "s3-m1" and first.sender == "오세영" and (first.date, first.time) == ("2026-11-04", "14:20")
+    assert first.text.startswith("[제목] [브라이트애드]") and "11월 6일까지 회신" in first.text
+    eml = (
+        "From: =?utf-8?b?7J207IiY7KeE?= <sujin@example.com>\nTo: me@example.com\nSubject: Report\n"
+        "Date: Wed, 04 Nov 2026 01:30:00 +0000\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n내일까지 확인 부탁드려요\n"
+    )
+    room = parse_input(eml, 0)
+    assert room.channel == "mail" and room.messages[0].sender == "이수진"
+    assert (room.messages[0].date, room.messages[0].time) == ("2026-11-04", "10:30")
+
+
+def test_parse_calendar_and_conflict():
+    room = parse_calendar(_read("calendar.ics"), 3)
+    assert [e.id for e in room.events] == ["s4-c1", "s4-c2", "s4-c3"]
+    review = room.events[1]
+    assert (review.date, review.start, review.end) == ("2026-11-10", "15:00", "16:00")
+    assert calendar_conflict("2026-11-10", "15:30", review)
+    assert not calendar_conflict("2026-11-10", "16:00", review)
+    assert not calendar_conflict("2026-11-11", "15:00", review)
+    utc = parse_calendar("BEGIN:VEVENT\nSUMMARY:A\nDTSTART:20261105T010000Z\nEND:VEVENT", 0)
+    assert utc.events[0].start == "10:00"
+
+
+def test_detect_channel():
+    assert detect_channel(_read("calendar.ics")) == "calendar"
+    assert detect_channel(_read("mail-inbox.txt")) == "mail"
+    assert detect_channel(_read("kakao-marketing.txt")) == "kakao"
 
 
 def test_resolve_korean_date():

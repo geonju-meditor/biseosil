@@ -1,7 +1,7 @@
 """카카오톡 '대화 내보내기' txt 파서 (PC·모바일 형식).
 
 수집 비서가 사용하는 결정적 도구다. 원문을 메시지 단위로 나누고 각 메시지에
-`r{방}-m{번호}` 형태의 ID를 붙여, 다른 비서가 근거를 ID로 인용할 수 있게 한다.
+`s{입력}-m{번호}` 형태의 ID를 붙여, 다른 비서가 근거를 ID로 인용할 수 있게 한다.
 """
 
 from __future__ import annotations
@@ -34,14 +34,34 @@ class Message:
     text: str
 
     def prompt_line(self) -> str:
-        return f"[{self.id}] {self.date} {self.time} {self.sender}: {self.text}"
+        flat = self.text.replace("\n", " / ")
+        return f"[{self.id}] {self.date} {self.time} {self.sender}: {flat}"
+
+
+@dataclass
+class CalendarEntry:
+    id: str
+    title: str
+    date: str  # YYYY-MM-DD
+    start: str | None  # HH:MM, 종일이면 None
+    end: str | None
+    location: str | None = None
+
+    def prompt_line(self) -> str:
+        span = f"{self.start}~{self.end or ''}" if self.start else "종일"
+        where = f" ({self.location})" if self.location else ""
+        return f"[{self.id}] {self.date} {span} {self.title}{where}"
 
 
 @dataclass
 class Room:
+    """입력 하나(카톡 방, 메일 묶음, 캘린더)."""
+
     index: int
     name: str
     messages: list[Message] = field(default_factory=list)
+    channel: str = "kakao"
+    events: list[CalendarEntry] = field(default_factory=list)
 
     @property
     def participants(self) -> list[str]:
@@ -93,7 +113,7 @@ def parse_export(raw: str, index: int, fallback_name: str | None = None) -> Room
                 last = None
                 continue
             last = Message(
-                id=f"r{index + 1}-m{len(room.messages) + 1}",
+                id=f"s{index + 1}-m{len(room.messages) + 1}",
                 sender=match["sender"].strip(),
                 date=msg_day,
                 time=_to_24h(match["ampm"], match["h"], match["mi"]),
@@ -112,6 +132,7 @@ def guess_me(rooms: list[Room], hint: str | None) -> str | None:
     if hint and hint.strip():
         return hint.strip()
     counts: dict[str, int] = {}
+    rooms = [r for r in rooms if r.channel == "kakao"]
     for room in rooms:
         for person in room.participants:
             counts[person] = counts.get(person, 0) + 1
