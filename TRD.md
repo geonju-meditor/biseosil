@@ -9,6 +9,21 @@
 
 ## 2. 시스템 구성
 
+```mermaid
+flowchart LR
+  U[브라우저<br/>정적 HTML/JS] -- "POST /api/run<br/>AG-UI SSE" --> API[FastAPI<br/>Azure Container Apps]
+  API --> WF[Agent Framework<br/>WorkflowBuilder]
+  WF --> C[채널별 수집 실행기<br/>카톡·메일·캘린더]
+  WF --> L[팀장<br/>GitHubCopilotAgent]
+  WF --> S[할 일·일정·답장<br/>GitHubCopilotAgent ×3]
+  WF --> R[검토 실행기]
+  L & S --> SDK[GitHub Copilot SDK<br/>CopilotClient] --> M[(Copilot 모델)]
+  S -. "@tool resolve_korean_date" .-> T[날짜 계산 도구]
+  API -. 관리 ID .-> KV[Key Vault<br/>COPILOT_GITHUB_TOKEN]
+  API -. OpenTelemetry .-> AI[Application Insights]
+  GH[GitHub Actions<br/>OIDC] -- "이미지 빌드·푸시" --> ACR[Container Registry] --> API
+```
+
 ```text
 브라우저 (정적 HTML/JS, 반응형)
    │  POST /api/run  ← AG-UI 이벤트 SSE
@@ -41,11 +56,12 @@ FastAPI (Python 3.12, uvicorn) ── Azure Container Apps
 
 ### 3.1 그래프
 
-```text
-intake ─fan-out─▶ collect-1 … collect-N   (입력별 채널 수집 비서, 동시)
-       ─fan-in──▶ lead                    (팀장: 요약·우선순위·작업 지시)
-       ─fan-out─▶ todo · schedule · reply (전문 비서, 동시)
-       ─fan-in──▶ review                  (검토: 근거 검증·중복·충돌) ─▶ 출력
+```mermaid
+flowchart TD
+  intake[intake 접수] -->|fan-out| c1[collect-1] & c2[collect-2] & cN[collect-N]
+  c1 & c2 & cN -->|fan-in| lead[lead 팀장: 요약·우선순위·작업 지시]
+  lead -->|fan-out| todo[todo 할 일+업무 장부] & schedule[schedule 일정 + 날짜 도구] & reply[reply 답장]
+  todo & schedule & reply -->|fan-in| review[review 검토: 근거 검증·중복·충돌] --> out[결과]
 ```
 
 `WorkflowBuilder`의 `add_fan_out_edges` / `add_fan_in_edges`로 구성한다. `GET /api/workflow`가
@@ -190,13 +206,18 @@ intake ─fan-out─▶ collect-1 … collect-N   (입력별 채널 수집 비�
 | 리소스 | 용도 |
 |---|---|
 | Container Apps 환경 + Container App | 앱 실행(외부 HTTPS, 포트 8000, 1 vCPU/2Gi, 최소 1·최대 2 복제본, `/health` 프로브) |
-| Container Registry | 이미지 저장, azd 원격 빌드 |
+| Container Registry | 이미지 저장(GitHub Actions가 OIDC로 푸시) |
 | Key Vault (RBAC) | Copilot 토큰 secret |
 | 사용자 할당 관리 ID | Key Vault Secrets User, AcrPull |
 | Log Analytics + Application Insights | 로그·추적(Azure Monitor OpenTelemetry + Agent Framework 계측) |
 
 - `azure.yaml` + `infra/main.bicep`(구독 범위, `rg-{env}` 생성) + `infra/modules/application.bicep`.
-- 배포: `azd env set COPILOT_GITHUB_TOKEN …` 후 `azd up`. 출력 `APP_URL`이 제출 URL이다.
+- 인프라: `azd env set COPILOT_GITHUB_TOKEN …` 후 `azd provision`으로 위 리소스를 만든다.
+- 앱 배포(CI/CD): `.github/workflows/deploy.yml`이 `main` 푸시마다 테스트(`pytest`) → 이미지 빌드 →
+  ACR 푸시 → `az containerapp update` → `/health` 확인을 수행한다. Azure 로그인은 OIDC 페더레이션
+  (main 브랜치 전용, 저장된 비밀번호 없음)이며 권한은 ACR `AcrPush`와 리소스 그룹 `Contributor`로 제한한다.
+  새 구독에서 ACR 원격 빌드(Tasks)가 막혀 있어도 이 경로로 반복 배포할 수 있다.
+- 배포 URL: https://ca-biseosil-dev-app.ambitiousplant-e1c78535.koreacentral.azurecontainerapps.io
 - 컨테이너는 `python:3.12-slim` 기반, 빌드 시 Copilot CLI 런타임을 내려받고 비루트 사용자로 실행한다.
 
 ## 7. 테스트 전략
@@ -209,7 +230,9 @@ intake ─fan-out─▶ collect-1 … collect-N   (입력별 채널 수집 비�
 - 대체 비서: 샘플 전체를 `deterministic`으로 실행해 할 일·일정·답장이 근거와 함께 나오는지 확인
 - API: 샘플 실행 시 AG-UI 이벤트 순서(`RUN_STARTED` … `RUN_FINISHED`), 오류 코드 형식, `.ics` 응답
 
-## 8. 2차 예정 (아직 구현 전)
+## 8. 이번 제출 범위 밖 (향후 확장 설계)
+
+아래는 설계 메모이며 현재 코드에는 포함되지 않는다.
 
 - Outlook 연동: 브라우저 MSAL.js(PKCE, 클라이언트 비밀 없음) + Microsoft Graph 위임 권한
   `Mail.Read`, `Calendars.Read`로 최근 메일·2주 일정을 읽어 `inputs`로 넣는다. 로그인은 선택이다.
