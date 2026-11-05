@@ -135,7 +135,7 @@ function setBusy(busy) {
     b.disabled = busy;
     b.setAttribute("aria-busy", String(busy));
   }
-  $("#sample-btn").textContent = busy ? "⏳ 비서들이 일하는 중…" : "✨ 샘플로 바로 해보기";
+  $("#sample-btn").textContent = busy ? "비서들이 일하는 중…" : "샘플로 바로 해보기";
 }
 
 function startTimer() {
@@ -272,9 +272,9 @@ function handleEvent(ev) {
       } else if (id === "lead") {
         detail.textContent = d.summary;
       } else if (id === "review") {
-        detail.textContent = `근거 없는 항목·중복 ${d.removed}건 제거, 일정 충돌 ${d.conflicts}건 확인`;
+        detail.textContent = `${d.removed}건 제거 · 충돌 ${d.conflicts}건`;
       } else {
-        detail.textContent = `${d.count}건 정리 완료${d.fallback ? " (규칙 기반 대체)" : ""}`;
+        detail.textContent = `${d.count}건${d.fallback ? " · 규칙 기반 대체" : ""}`;
       }
       $("#board-status").textContent = `${name} 완료`;
       log(`${name} 완료`);
@@ -282,7 +282,7 @@ function handleEvent(ev) {
     case "error":
       setStatus(card, "error");
       tail.hidden = true;
-      detail.textContent = `⚠️ ${d.message || "이 비서는 결과를 내지 못했습니다."} 나머지 결과는 그대로 보여 드립니다.`;
+      detail.textContent = d.message || "이 비서는 결과를 내지 못했습니다.";
       log(`${name} 오류`);
       break;
   }
@@ -317,27 +317,28 @@ function showResult(data) {
   $("#board-status").textContent = "모든 비서가 작업을 마쳤습니다.";
   const s = data.stats;
   $("#stats").innerHTML = `
-    <div class="stat"><b>${s.manualMin}분</b><span>직접 읽고 정리하면 (추정)</span></div>
-    <div class="stat arrow" aria-hidden="true">→</div>
-    <div class="stat good"><b>${s.elapsedSec}초</b><span>비서실 처리 시간</span></div>
-    <div class="stat"><b>${s.messages}개</b><span>읽은 메시지·메일 · 출처 ${data.inputs.length}곳</span></div>
+    <div class="stat"><b>${s.manualMin}분</b><span>직접 정리하면 (추정)</span></div>
+    <div class="stat good"><b>${s.elapsedSec}초</b><span>비서실</span></div>
+    <div class="stat"><b>${s.messages}개</b><span>읽은 메시지 · ${data.inputs.length}곳</span></div>
     <p class="muted small formula">추정식: ${esc(s.formula)}</p>`;
   const fb = data.fallbacks || [];
   $("#result-mode").hidden = data.mode !== "deterministic" && !fb.length;
   $("#result-mode").textContent = data.mode === "deterministic" ? "대체 모드" : "일부 대체";
   const lead = data.lead;
   $("#summary").innerHTML = lead
-    ? `<p><b>🧭 팀장 요약 (${esc(data.me || "나")} 기준 · ${fmtDate(data.referenceDate)})</b></p><p>${esc(lead.summary)}</p>`
-    : `<p class="muted">팀장 요약을 만들지 못했습니다. 아래 결과는 각 비서가 만든 것입니다.</p>`;
+    ? `<p>팀장 요약 <span class="muted small">${esc(data.me || "나")} 기준 · ${fmtDate(data.referenceDate)}</span></p><p>${esc(lead.summary)}</p>`
+    : `<p>팀장 요약 없음</p><p>아래 결과는 각 비서가 만든 것입니다.</p>`;
   const alerts = [];
-  for (const c of data.review.conflicts) alerts.push(`<li>⏰ ${esc(c)}</li>`);
-  for (const c of data.review.crunch) alerts.push(`<li>🔥 ${fmtDate(c.date)}에 할 일 ${c.count}개가 몰려 있습니다: ${c.items.map(esc).join(", ")}</li>`);
-  for (const w of lead?.warnings || []) alerts.push(`<li>💡 ${esc(w)}</li>`);
   const errs = Object.entries(data.errors || {});
-  if (data.mode !== "deterministic" && fb.length) alerts.push(`<li class="err">⚠️ ${fb.map((k) => esc(AGENTS[k]?.name || k)).join(", ")}는 AI 응답이 실패해 규칙 기반으로 대신 정리했습니다.</li>`);
+  if (data.mode !== "deterministic" && fb.length) alerts.push(`<li class="err">${fb.map((k) => esc(AGENTS[k]?.name || k)).join(", ")}: AI 응답 실패로 규칙 기반 정리</li>`);
+  for (const [k, m] of errs) alerts.push(`<li class="err">${esc(AGENTS[k]?.name || k)}: ${esc(m)}</li>`);
   if (data.security?.notice) alerts.push(`<li>🛡️ ${esc(data.security.notice)}</li>`);
-  for (const [k, m] of errs) alerts.push(`<li class="err">⚠️ ${esc(AGENTS[k]?.name || k)}: ${esc(m)}</li>`);
-  $("#alerts").innerHTML = alerts.length ? `<ul class="alert-list">${alerts.join("")}</ul>` : "";
+  for (const c of data.review.conflicts) alerts.push(`<li>⏰ ${esc(c)}</li>`);
+  for (const c of data.review.crunch) alerts.push(`<li>🔥 ${fmtDate(c.date)} 할 일 ${c.count}개 몰림: ${c.items.map(esc).join(", ")}</li>`);
+  for (const w of lead?.warnings || []) alerts.push(`<li>💡 ${esc(w)}</li>`);
+  const head = alerts.slice(0, 3), rest = alerts.slice(3);
+  $("#alerts").innerHTML = (head.length ? `<ul class="alert-list" aria-label="확인할 점">${head.join("")}</ul>` : "")
+    + (rest.length ? `<details class="more"><summary>확인할 점 ${rest.length}개 더 보기</summary><ul class="alert-list">${rest.join("")}</ul></details>` : "");
   renderAll();
   $("#result-section").hidden = false;
   $("#intro").hidden = true;
@@ -360,7 +361,7 @@ const PRI = { high: "급함", mid: "보통", low: "여유" };
 function renderTodos() {
   const pane = $("#pane-todos");
   if (!result.todos.length) { pane.innerHTML = `<p class="empty">내 할 일을 찾지 못했습니다.</p>`; return; }
-  pane.innerHTML = `<div class="pane-actions"><button class="btn small" data-act="copy-todos">📋 할 일 목록 복사</button></div>
+  pane.innerHTML = `<div class="pane-actions"><button class="btn small" data-act="copy-todos">목록 복사</button></div>
     <ul class="items">${result.todos.map((t, i) => `
     <li class="item ${t.done ? "is-done" : ""}">
       <div class="row"><input type="checkbox" id="todo-${i}" data-act="todo-done" data-i="${i}" ${t.done ? "checked" : ""}>
@@ -376,7 +377,7 @@ function renderEvents() {
   const pane = $("#pane-events");
   if (!result.events.length) { pane.innerHTML = `<p class="empty">일정을 찾지 못했습니다.</p>`; return; }
   const n = result.events.filter((e) => e.selected).length;
-  pane.innerHTML = `<div class="pane-actions"><button class="btn primary small" data-act="ics" ${n ? "" : "disabled"}>📅 선택한 일정 ${n}개 캘린더 파일(.ics)로 받기</button></div>
+  pane.innerHTML = `<div class="pane-actions"><button class="btn primary small" data-act="ics" ${n ? "" : "disabled"}>선택한 ${n}개 캘린더에 추가 (.ics)</button></div>
     <ul class="items">${result.events.map((e, i) => `
     <li class="item">
       <div class="row"><input type="checkbox" id="ev-${i}" data-act="ev-sel" data-i="${i}" ${e.selected ? "checked" : ""}>
@@ -384,7 +385,7 @@ function renderEvents() {
         <span class="pri ${e.my_attendance === "confirmed" ? "low" : "mid"}">${ATTEND[e.my_attendance]}</span>
         <button class="icon" data-act="del" data-kind="events" data-i="${i}" aria-label="${esc(e.title)} 빼기">✕</button></div>
       <p class="sub">${dday(e.date)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)}</p>
-      ${e.conflicts?.length ? `<p class="clash">⚠️ ${e.conflicts.map(esc).join(", ")} · 확인 후 직접 선택하세요</p>` : ""}
+      ${e.conflicts?.length ? `<p class="clash">⚠️ 겹침: ${e.conflicts.map(esc).join(", ")}</p>` : ""}
       ${evidenceHtml(e.evidence)}</li>`).join("")}</ul>`;
 }
 
@@ -399,12 +400,12 @@ function renderReplies() {
         <button class="icon" data-act="del" data-kind="replies" data-i="${r.i}" aria-label="${esc(r.topic)} 빼기">✕</button></div>
       <p class="sub">${esc(r.room)}</p>
       ${evidenceHtml(r.evidence)}
-      ${r.draft != null ? `<label class="draft-label" for="draft-${r.i}">답장 초안 <span class="badge ai small">AI 생성</span> <span class="muted">[ ]는 직접 채워 주세요</span></label>
+      ${r.draft != null ? `<label class="draft-label" for="draft-${r.i}">답장 초안 <span class="badge ai small">AI 생성</span> <span class="muted small">[ ]는 직접 채우기</span></label>
       <textarea id="draft-${r.i}" class="draft" data-act="draft" data-i="${r.i}" rows="3">${esc(r.draft)}</textarea>
-      <div class="cta-row"><button class="btn small" data-act="copy-draft" data-i="${r.i}">📋 복사</button>
-        ${r.direction === "i_owe" && !r.sent ? `<button class="btn small" data-act="mark-sent" data-i="${r.i}">✔ 답장했어요</button>` : ""}</div>` : ""}
+      <div class="cta-row"><button class="btn small" data-act="copy-draft" data-i="${r.i}">복사</button>
+        ${r.direction === "i_owe" && !r.sent ? `<button class="btn small" data-act="mark-sent" data-i="${r.i}">답장했어요</button>` : ""}</div>` : ""}
     </li>`;
-  pane.innerHTML = `<p class="muted small">비서실은 메시지를 직접 보내지 않습니다. 초안을 고친 뒤 복사해서 카카오톡이나 메일에 붙여넣으세요.</p>
+  pane.innerHTML = `<p>직접 보내지 않습니다. 고친 뒤 복사해서 붙여넣으세요.</p>
     <h3 class="group">내가 답해야 할 것 (${mine.length})</h3>${mine.length ? `<ul class="items">${mine.map(card).join("")}</ul>` : `<p class="empty">없음</p>`}
     <h3 class="group">내가 받아야 할 것 (${theirs.length})</h3>${theirs.length ? `<ul class="items">${theirs.map(card).join("")}</ul>` : `<p class="empty">없음</p>`}`;
 }
@@ -414,7 +415,7 @@ function renderLedger() {
   const L = result.ledger;
   const pane = $("#pane-ledger");
   pane.innerHTML = `
-    ${L.open_questions.length ? `<div class="open"><h3 class="group">🙋 아직 아무도 정하지 않은 것</h3><ul>${L.open_questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ul></div>` : ""}
+    ${L.open_questions.length ? `<div class="open"><h3 class="group">아직 정하지 않은 것</h3><ul>${L.open_questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ul></div>` : ""}
     <h3 class="group">누가 뭘 맡았나 (${L.assignments.length})</h3>
     ${L.assignments.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">담당</th><th scope="col">할 일</th><th scope="col">상태</th><th scope="col">근거</th></tr></thead><tbody>
       ${L.assignments.map((a) => `<tr class="${a.owner === result.me ? "me" : ""}"><td>${esc(a.owner)}</td><td>${esc(a.task)}<br><span class="muted small">${esc(a.room)}</span></td><td><span class="st ${a.status}">${ASTATUS[a.status]}</span></td><td>${evidenceHtml(a.evidence)}</td></tr>`).join("")}
@@ -428,12 +429,12 @@ function renderReview() {
   const flagged = result.inputs.flatMap((r) => r.flagged.map((id) => ({ id, ...(result.source?.[id] || {}) })));
   const pii = result.inputs.reduce((n, r) => n + Object.values(r.pii).reduce((a, b) => a + b, 0), 0);
   pane.innerHTML = `
-    <p>검토 비서는 모든 항목의 인용문을 원문과 대조해, 근거가 없거나 지시문 의심 메시지에서 나온 항목을 뺐습니다.</p>
-    <h3 class="group">🛡️ 지시문 의심 메시지 (${flagged.length})</h3>
-    ${flagged.length ? `<ul class="items">${flagged.map((f) => `<li class="item warn"><p class="sub">${esc(f.room)} · ${esc(f.sender)} · ${esc(f.when)}</p><p class="muted small">→ 지시문처럼 보여 내용을 비서에게 보내지 않고 격리했습니다.</p></li>`).join("")}</ul>` : `<p class="empty">없음</p>`}
-    <h3 class="group">🗑️ 검토에서 뺀 항목 (${result.review.removed.length})</h3>
-    ${result.review.removed.length ? `<ul class="items">${result.review.removed.map((r) => `<li class="item"><p class="title">${esc(r.title)}</p><p class="sub">${esc(r.reason)}</p></li>`).join("")}</ul>` : `<p class="empty">모든 항목이 원문 근거 확인을 통과했습니다.</p>`}
-    <h3 class="group">🔒 개인정보</h3><p>${pii ? `전화번호·이메일·계좌번호 등 ${pii}건을 AI에 보내기 전에 가렸습니다.` : "가릴 개인정보가 없었습니다."} 입력 원문은 서버에 저장하지 않습니다.</p>`;
+    <p>모든 항목의 인용을 원문과 대조했습니다.</p>
+    <h3 class="group">지시문 의심 메시지 (${flagged.length})</h3>
+    ${flagged.length ? `<ul class="items">${flagged.map((f) => `<li class="item warn"><p class="sub">${esc(f.room)} · ${esc(f.sender)} · ${esc(f.when)}</p><p class="muted small">내용을 비서에게 보내지 않고 격리함</p></li>`).join("")}</ul>` : `<p class="empty">없음</p>`}
+    <h3 class="group">검토에서 뺀 항목 (${result.review.removed.length})</h3>
+    ${result.review.removed.length ? `<ul class="items">${result.review.removed.map((r) => `<li class="item"><p class="title">${esc(r.title)}</p><p class="sub">${esc(r.reason)}</p></li>`).join("")}</ul>` : `<p class="empty">모두 통과</p>`}
+    <h3 class="group">개인정보</h3><p class="empty">${pii ? `${pii}건을 AI에 보내기 전에 가림` : "가릴 개인정보 없음"} · 원문 저장 안 함</p>`;
 }
 
 // ---------- 동작 ----------

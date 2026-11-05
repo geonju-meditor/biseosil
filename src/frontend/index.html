@@ -6,61 +6,64 @@
   <title>비서실 — 단톡방·메일·일정을 비서 팀이 나눠 읽어 드립니다</title>
   <meta name="description" content="카카오톡 대화 내보내기, 업무 메일, 캘린더를 넣으면 팀장과 전문 비서들이 내 할 일, 일정, 답장할 것을 원문 근거와 함께 정리합니다.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <a class="skip" href="#main">본문으로 건너뛰기</a>
   <header class="topbar">
-    <div class="brand"><span aria-hidden="true">🗂️</span> 비서실</div>
-    <p class="tagline">팀장 1명 + 채널별 비서들이 단톡방·메일·일정을 나눠 읽습니다</p>
+    <div class="brand">비서실</div>
+    <p class="tagline">AI 비서 팀이 단톡방·메일·일정을 나눠 읽습니다</p>
   </header>
 
   <main id="main">
     <section id="intro" class="panel hero" aria-labelledby="intro-title">
-      <h1 id="intro-title">쌓인 단톡방과 메일, 비서실에 맡기세요</h1>
-      <p class="lead-text">카카오톡 <b>대화 내보내기(txt)</b>, 업무 <b>메일</b>, <b>캘린더(.ics)</b>를 넣으면 채널별 비서들이 나눠 읽고
-        <b>내 할 일 · 일정 · 답장할 것 · 누가 뭘 맡았는지</b>를 원문 근거와 함께 정리합니다.
-        캘린더 내보내기와 답장 확정은 항상 직접 확인한 뒤에만 합니다.</p>
+      <h1 id="intro-title">흩어진 단톡방과 메일,<br>비서실이 나눠 읽어 드려요</h1>
+      <p class="lead-text">할 일 · 일정 · 답장할 것을 원문 근거와 함께 정리합니다.</p>
       <div class="cta-row">
-        <button id="sample-btn" class="btn primary big" type="button">✨ 샘플로 바로 해보기</button>
-        <span class="hint">마케팅팀 김하늘 대리의 단톡방 2개·메일 4통·캘린더 · 로그인 없음 · 약 1분</span>
+        <button id="sample-btn" class="btn primary big" type="button">샘플로 바로 해보기</button>
+        <span class="hint">로그인 없음 · 약 40초</span>
       </div>
+      <ul class="flow" aria-label="비서실이 하는 일">
+        <li class="flow-card"><span class="chip">입력</span><b>카톡 · 메일 · 캘린더</b><p>대화 내보내기 txt, 메일, .ics</p></li>
+        <li class="flow-card"><span class="chip blue">비서 팀</span><b>팀장 + 전문 비서 3명</b><p>할 일 · 일정 · 답장을 동시에</p></li>
+        <li class="flow-card"><span class="chip green">결과</span><b>근거 달린 정리</b><p>확인한 것만 캘린더·답장으로</p></li>
+      </ul>
 
       <details id="own-input" class="own">
         <summary>내 대화·메일로 해보기</summary>
         <form id="run-form" class="form" novalidate>
           <div class="field">
-            <label for="me">내 이름 <span class="muted">(카톡 표시 이름, 비우면 비서가 추정)</span></label>
+            <label for="me">내 이름 <span class="muted">카톡 표시 이름 · 선택</span></label>
             <input id="me" name="me" type="text" maxlength="40" autocomplete="off" placeholder="예: 김하늘">
           </div>
           <div class="field">
-            <label for="files">파일 (카톡 .txt · 메일 .eml · 캘린더 .ics, 최대 6개)</label>
+            <label for="files">파일 <span class="muted">.txt · .eml · .ics · 최대 6개</span></label>
             <input id="files" name="files" type="file" accept=".txt,.eml,.ics,text/plain,message/rfc822,text/calendar" multiple>
           </div>
           <div class="field">
-            <label for="paste">또는 붙여넣기 <span class="muted">(카톡 대화, 또는 '보낸 사람/날짜/제목'이 있는 메일)</span></label>
-            <textarea id="paste" rows="6" placeholder="카카오톡 대화 내보내기 내용이나 메일 본문을 머리글과 함께 붙여넣으세요"></textarea>
+            <label for="paste">또는 붙여넣기</label>
+            <textarea id="paste" rows="6" placeholder="카톡 대화 내보내기 내용, 또는 보낸 사람·날짜·제목이 있는 메일"></textarea>
           </div>
-          <p class="privacy">🔒 입력 원문은 서버에 저장하지 않습니다. 전화번호·이메일·계좌번호는 AI에 보내기 전에 가립니다. 합계 30,000자까지.</p>
+          <p class="privacy">원문은 저장하지 않고, 전화번호·이메일·계좌번호는 AI에 보내기 전에 가립니다. 최대 30,000자.</p>
           <button class="btn primary" type="submit">비서실에 맡기기</button>
         </form>
       </details>
       <p id="form-error" class="alert" role="alert" hidden></p>
-      <button id="retry-btn" class="btn" type="button" hidden>↻ 다시 시도</button>
+      <button id="retry-btn" class="btn" type="button" hidden>다시 시도</button>
     </section>
 
     <section id="board-section" class="panel" aria-labelledby="board-title" hidden>
       <div class="section-head">
-        <h2 id="board-title">비서실 작업 현황</h2>
+        <h2 id="board-title">비서들이 일하는 중</h2>
         <span id="mode-badge" class="badge warn" hidden title="AI 연결이 없어 규칙 기반 비서가 대신 답합니다">대체 모드</span>
         <span id="timer" class="timer">0.0초</span>
         <button id="cancel-btn" class="btn small" type="button" hidden>취소</button>
       </div>
-      <p class="muted small">Microsoft Agent Framework 워크플로 · 채널별 수집 동시 처리 → 팀장 지시 → 전문 비서 3명 동시 작업 → 검토 · AG-UI 이벤트로 실시간 표시</p>
       <ol id="board" class="board"></ol>
       <p id="board-status" class="sr-only" aria-live="polite"></p>
       <details class="log-wrap">
-        <summary>비서 작업 기록 보기</summary>
+        <summary>작업 기록</summary>
         <ol id="log" class="log"></ol>
       </details>
     </section>
@@ -76,11 +79,11 @@
       <div id="alerts"></div>
 
       <div class="tabs" role="tablist" aria-label="결과 종류">
-        <button role="tab" id="tab-todos" aria-controls="pane-todos" aria-selected="true">✅ 할 일 <span class="count" data-count="todos"></span></button>
-        <button role="tab" id="tab-events" aria-controls="pane-events" aria-selected="false" tabindex="-1">📅 일정 <span class="count" data-count="events"></span></button>
-        <button role="tab" id="tab-replies" aria-controls="pane-replies" aria-selected="false" tabindex="-1">✉️ 답장 <span class="count" data-count="replies"></span></button>
-        <button role="tab" id="tab-ledger" aria-controls="pane-ledger" aria-selected="false" tabindex="-1">📒 업무 장부 <span class="count" data-count="ledger"></span></button>
-        <button role="tab" id="tab-review" aria-controls="pane-review" aria-selected="false" tabindex="-1">🔍 검토 <span class="count" data-count="review"></span></button>
+        <button role="tab" id="tab-todos" aria-controls="pane-todos" aria-selected="true">할 일 <span class="count" data-count="todos"></span></button>
+        <button role="tab" id="tab-events" aria-controls="pane-events" aria-selected="false" tabindex="-1">일정 <span class="count" data-count="events"></span></button>
+        <button role="tab" id="tab-replies" aria-controls="pane-replies" aria-selected="false" tabindex="-1">답장 <span class="count" data-count="replies"></span></button>
+        <button role="tab" id="tab-ledger" aria-controls="pane-ledger" aria-selected="false" tabindex="-1">업무 장부 <span class="count" data-count="ledger"></span></button>
+        <button role="tab" id="tab-review" aria-controls="pane-review" aria-selected="false" tabindex="-1">검토 <span class="count" data-count="review"></span></button>
       </div>
       <div id="pane-todos" role="tabpanel" aria-labelledby="tab-todos" class="pane"></div>
       <div id="pane-events" role="tabpanel" aria-labelledby="tab-events" class="pane" hidden></div>
@@ -89,7 +92,7 @@
       <div id="pane-review" role="tabpanel" aria-labelledby="tab-review" class="pane" hidden></div>
 
       <div class="cta-row end">
-        <button id="restart-btn" class="btn" type="button">↺ 처음으로</button>
+        <button id="restart-btn" class="btn" type="button">처음으로</button>
       </div>
     </section>
   </main>
@@ -107,7 +110,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <footer class="foot">
-    <p>비서실은 메시지를 대신 보내지 않습니다. 모든 결과는 AI가 만든 초안이며 원문 근거를 함께 보여 줍니다.</p>
+    <p>비서실은 메시지를 대신 보내지 않습니다. 모든 결과는 AI 초안입니다.</p>
     <p class="muted">GitHub Copilot SDK · Microsoft Agent Framework · Azure Container Apps</p>
   </footer>
   <script src="/static/app.js" type="module"></script>
