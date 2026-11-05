@@ -14,7 +14,7 @@ const AGENTS = {
   reply: { emoji: "✉️", name: "답장 비서", role: "답장 빚·초안" },
   review: { emoji: "🔍", name: "검토 비서", role: "근거 확인·중복 제거·충돌 계산" },
 };
-const CHANNEL = { kakao: "카카오톡", mail: "메일", calendar: "캘린더" };
+const CHANNEL = { kakao: "카카오톡", mail: "메일", calendar: "캘린더", text: "메모" };
 const STATUS_TEXT = { wait: "대기", start: "작업 중", done: "완료", error: "오류", retry: "다시 시도" };
 const WHO = { review: "🔍 검토 비서", schedule: "📅 일정 비서", user: "나" };
 function talkHtml(t) {
@@ -32,7 +32,7 @@ $("#sample-btn").addEventListener("click", async () => {
   try {
     const res = await fetch("/api/samples");
     const data = await res.json();
-    await run({ me: data.me, inputs: data.samples.map((s) => ({ text: s.text, name: s.name, channel: s.channel })) });
+    await run({ me: data.me, inputs: data.samples.map((s) => ({ text: s.text, name: s.name, channel: s.channel })) }, []);
   } catch {
     showFormError("샘플을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.");
   }
@@ -41,27 +41,43 @@ $("#sample-btn").addEventListener("click", async () => {
 $("#run-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const inputs = [];
-  const files = [...$("#files").files];
-  if (files.length > 6) return showFormError("파일은 한 번에 6개까지 넣을 수 있습니다.");
-  for (const f of files) inputs.push({ text: await f.text(), name: f.name.replace(/\.(txt|eml|ics)$/i, "") });
+  // fields[i]는 inputs[i]를 만든 화면 요소. 서버가 알려 준 오류 위치를 이 요소로 되짚는다.
+  const fields = [];
+  const fileInput = $("#files");
+  const files = [...fileInput.files];
+  if (files.length > 6) return showFormError("파일은 한 번에 6개까지 넣을 수 있습니다.", false, fileInput);
+  for (const f of files) {
+    inputs.push({ text: await f.text(), name: f.name.replace(/\.(txt|eml|ics)$/i, ""), label: `파일 ${f.name}` });
+    fields.push(fileInput);
+  }
   document.querySelectorAll("#pastes .paste").forEach((box, i) => {
-    const text = $("textarea", box).value.trim();
-    if (text) inputs.push({ text, name: $("input", box).value.trim() || null, label: `붙여넣은 내용 ${i + 1}` });
+    const ta = $("textarea", box);
+    const text = ta.value.trim();
+    const name = $(".paste-name", box).value.trim();
+    if (text) {
+      inputs.push({ text, name: name || null, label: `붙여넣은 내용 ${i + 1}${name ? `(${name})` : ""}` });
+      fields.push(ta);
+    }
   });
-  if (!inputs.length) return showFormError("파일을 고르거나 대화·메일·메모를 붙여넣어 주세요.");
+  if (!inputs.length) return showFormError("파일을 고르거나 대화·메일·메모를 붙여넣어 주세요.", false, $("#pastes textarea"));
   if (inputs.length > MAX_INPUTS) return showFormError(`파일과 붙여넣기를 합쳐 ${MAX_INPUTS}개까지 넣을 수 있습니다 (지금 ${inputs.length}개).`);
   const total = inputs.reduce((n, r) => n + r.text.length, 0);
   if (total > 30000) return showFormError(`입력이 너무 깁니다. 합계 30,000자 이하로 줄여 주세요 (현재 ${total.toLocaleString()}자).`);
-  await run({ me: $("#me").value.trim() || null, inputs });
+  await run({ me: $("#me").value.trim() || null, inputs }, fields);
 });
 
 const MAX_INPUTS = 6;
 function addPaste() {
   const box = document.createElement("div");
   box.className = "paste";
-  box.innerHTML = `<div class="paste-head"><label></label><input type="text" maxlength="40" autocomplete="off" placeholder="이름 (선택) · 예: 팀 단톡방"><button class="btn small ghost" type="button">삭제</button></div>
+  box.innerHTML = `<div class="paste-head"><label></label><input class="paste-name" type="text" maxlength="40" autocomplete="off" placeholder="이름 (선택) · 예: 팀 단톡방"><button class="btn small ghost paste-del" type="button">삭제</button></div>
     <textarea rows="5" placeholder="카톡 대화 내보내기, 보낸 사람·날짜·제목이 있는 메일, 또는 자유롭게 쓴 메모"></textarea>`;
-  $("button", box).addEventListener("click", () => { box.remove(); renumberPastes(); $("#pastes .paste:last-child textarea")?.focus(); });
+  $(".paste-del", box).addEventListener("click", () => {
+    const next = box.nextElementSibling || box.previousElementSibling;
+    box.remove();
+    renumberPastes();
+    $("textarea", next)?.focus();
+  });
   $("#pastes").append(box);
   renumberPastes();
   return box;
@@ -69,12 +85,12 @@ function addPaste() {
 function renumberPastes() {
   const boxes = [...document.querySelectorAll("#pastes .paste")];
   boxes.forEach((box, i) => {
-    const n = i + 1, label = $("label", box), ta = $("textarea", box), name = $("input", box);
+    const n = i + 1, label = $("label", box), ta = $("textarea", box), name = $(".paste-name", box), del = $(".paste-del", box);
     ta.id = `paste-${n}`; name.id = `paste-name-${n}`;
     label.htmlFor = ta.id; label.textContent = `붙여넣은 내용 ${n}`;
     name.setAttribute("aria-label", `붙여넣은 내용 ${n} 이름`);
-    $("button", box).setAttribute("aria-label", `붙여넣은 내용 ${n} 삭제`);
-    $("button", box).hidden = boxes.length === 1;
+    del.setAttribute("aria-label", `붙여넣은 내용 ${n} 삭제`);
+    del.hidden = boxes.length === 1;
   });
   $("#add-paste").disabled = boxes.length >= MAX_INPUTS;
   $("#add-paste").textContent = boxes.length >= MAX_INPUTS ? "최대 6칸" : "+ 붙여넣기 추가";
@@ -89,21 +105,44 @@ $("#restart-btn").addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-function showFormError(msg, canRetry = false) {
+// field가 있으면 그 입력 칸을 빨갛게 표시하고 오류 문구와 연결한 뒤 포커스를 옮긴다.
+function showFormError(msg, canRetry = false, field = null) {
   const el = $("#form-error");
   el.textContent = msg;
   el.hidden = !msg;
   $("#retry-btn").hidden = !(msg && canRetry && lastPayload);
+  for (const f of document.querySelectorAll("#run-form [aria-invalid]")) {
+    f.removeAttribute("aria-invalid");
+    f.removeAttribute("aria-describedby");
+  }
+  if (msg && field) {
+    $("#own-input").open = true;
+    field.setAttribute("aria-invalid", "true");
+    field.setAttribute("aria-describedby", "form-error");
+    field.focus({ preventScroll: true });
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    return true;
+  }
+  return false;
 }
+$("#run-form").addEventListener("input", (e) => {
+  if (e.target.getAttribute("aria-invalid")) {
+    e.target.removeAttribute("aria-invalid");
+    e.target.removeAttribute("aria-describedby");
+  }
+});
 
 // ---------- 실행 + SSE ----------
 let lastPayload = null;
+let lastFields = [];
+let runStartedAt = 0;
 let controller = null;
 
-async function run(payload) {
+async function run(payload, fields = []) {
   if (running) return;
   running = true;
   lastPayload = payload;
+  lastFields = fields;
   controller = new AbortController();
   $("#cancel-btn").hidden = false;
   showFormError("");
@@ -122,14 +161,17 @@ async function run(payload) {
     });
     if (!res.ok) {
       let msg = "요청을 처리하지 못했습니다.";
-      try { msg = (await res.json()).error.message; } catch { /* keep default */ }
-      const err = new Error(msg);
+      let at = null;
+      try { ({ message: msg, input: at = null } = (await res.json()).error); } catch { /* keep default */ }
+      const err = new Error(msg || "요청을 처리하지 못했습니다.");
       err.invalid = [400, 413, 422].includes(res.status);
+      err.field = at === null ? null : fields[at] || null;
       throw err;
     }
     $("#board-section").hidden = false;
     $("#board-section").scrollIntoView({ behavior: "smooth", block: "start" });
     startTimer();
+    runStartedAt = performance.now();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -156,13 +198,14 @@ async function run(payload) {
     const cancelled = err.name === "AbortError";
     if (err.invalid) {
       $("#board-section").hidden = true;
-      $("#own-input").open = true;
-      showFormError(`⚠️ ${err.message}`);
+      if (fields.length) $("#own-input").open = true;
+      if (showFormError(`⚠️ ${err.message}`, false, err.field)) return;
     } else {
       showFormError(cancelled ? "분석을 취소했습니다." : `⚠️ ${err.message || "문제가 생겼습니다."}`, true);
       $("#board-status").textContent = "작업이 중단되었습니다.";
     }
     $("#form-error").scrollIntoView({ behavior: "smooth", block: "center" });
+    $("#form-error").focus?.();
   } finally {
     stopTimer();
     setBusy(false);
@@ -172,7 +215,7 @@ async function run(payload) {
 }
 
 $("#cancel-btn").addEventListener("click", () => controller?.abort());
-$("#retry-btn").addEventListener("click", () => { if (lastPayload) run(lastPayload); });
+$("#retry-btn").addEventListener("click", () => { if (lastPayload) run(lastPayload, lastFields); });
 
 function setBusy(busy) {
   for (const b of document.querySelectorAll("#sample-btn, #run-form button")) {
@@ -437,7 +480,9 @@ function renderEvents() {
         <button class="icon" data-act="del" data-kind="events" data-i="${i}" aria-label="${esc(e.title)} 빼기">✕</button></div>
       <p class="sub">${dday(e.date, e.start)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)} · <span class="badge ai small">AI 생성</span></p>
       ${e.conflicts?.length ? `<p class="clash">⚠️ 겹침: ${e.conflicts.map(esc).join(", ")}</p>` : ""}
-      ${e.resolution ? `<p class="fix"><span class="chip blue">${FIX[e.resolution.action]}</span> ${esc(e.resolution.note)}</p>` : ""}
+      ${e.resolution ? `<p class="fix"><span class="chip blue">${FIX[e.resolution.action]}</span> ${esc(e.resolution.note)}</p>
+        ${e.resolution.action === "propose_time" && e.resolution.alt_start && !e.resolution.applied ? `<div class="cta-row"><button class="btn small" data-act="apply-alt" data-i="${i}">${esc(e.resolution.alt_start)}~${esc(e.resolution.alt_end)}로 바꾸기</button></div>` : ""}
+        ${e.resolution.applied ? `<p class="muted small">대안 시간으로 바꿈 (원래 ${esc(e.resolution.original.start || "시간 미정")})</p>` : ""}` : ""}
       ${evidenceHtml(e.evidence)}</li>`).join("")}</ul>`;
 }
 
@@ -470,7 +515,7 @@ function renderLedger() {
     ${L.open_questions.length ? `<div class="open"><h3 class="group">아직 정하지 않은 것</h3><ul>${L.open_questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ul></div>` : ""}
     <h3 class="group">누가 뭘 맡았나 (${L.assignments.length})</h3>
     ${L.assignments.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">담당</th><th scope="col">할 일</th><th scope="col">상태</th><th scope="col">근거</th></tr></thead><tbody>
-      ${L.assignments.map((a) => `<tr class="${a.owner === result.me ? "me" : ""}"><td>${esc(a.owner)}</td><td>${esc(a.task)}<br><span class="muted small">${esc(a.room)}</span></td><td><span class="st ${a.status}">${ASTATUS[a.status]}</span></td><td>${evidenceHtml(a.evidence)}</td></tr>`).join("")}
+      ${L.assignments.map((a) => `<tr class="${a.owner === result.me ? "me" : ""}"><td data-label="담당">${esc(a.owner)}</td><td data-label="할 일">${esc(a.task)}<br><span class="muted small">${esc(a.room)}</span></td><td data-label="상태"><span class="st ${a.status}">${ASTATUS[a.status]}</span></td><td data-label="근거">${evidenceHtml(a.evidence)}</td></tr>`).join("")}
     </tbody></table></div>` : `<p class="empty">없음</p>`}
     <h3 class="group">정해진 것 (${L.decisions.length})</h3>
     ${L.decisions.length ? `<ul class="items">${L.decisions.map((d) => `<li class="item"><p class="title">${esc(d.decision)}</p><p class="sub">${esc(d.room)}</p>${evidenceHtml(d.evidence)}</li>`).join("")}</ul>` : `<p class="empty">없음</p>`}`;
@@ -504,11 +549,31 @@ document.addEventListener("click", async (e) => {
   if (!b || b.tagName === "INPUT" || b.tagName === "TEXTAREA") return;
   const i = Number(b.dataset.i);
   switch (b.dataset.act) {
-    case "del":
-      result[b.dataset.kind].splice(i, 1);
+    case "del": {
+      const kind = b.dataset.kind;
+      const [gone] = result[kind].splice(i, 1);
       renderAll();
-      toast("목록에서 뺐습니다.");
+      toast("목록에서 뺐습니다.", {
+        label: "되돌리기",
+        run: () => { result[kind].splice(i, 0, gone); renderAll(); toast("다시 넣었습니다."); },
+      });
       break;
+    }
+    case "apply-alt": {
+      const ev = result.events[i];
+      const r = ev.resolution;
+      if (await confirmDialog("이 시간으로 바꿀까요?", `<p><b>${esc(ev.title)}</b>을(를) ${fmtDate(ev.date)} <b>${esc(r.alt_start)}~${esc(r.alt_end)}</b>로 바꿔 캘린더 파일에 넣습니다. 상대에게는 이 시간을 직접 제안해 주세요.</p>`)) {
+        r.original = { start: ev.start, end: ev.end, conflicts: ev.conflicts };
+        Object.assign(ev, { start: r.alt_start, end: r.alt_end, conflicts: [], selected: true });
+        r.applied = true;
+        renderEvents();
+        toast("대안 시간으로 바꿨습니다.", {
+          label: "되돌리기",
+          run: () => { Object.assign(ev, r.original); r.applied = false; renderEvents(); toast("원래 시간으로 돌렸습니다."); },
+        });
+      }
+      break;
+    }
     case "copy-todos": {
       const text = result.todos.map((t) => `${t.done ? "☑" : "☐"} ${t.title}${t.due ? ` (~${fmtDate(t.due)})` : ""}`).join("\n");
       await copy(text);
@@ -548,7 +613,7 @@ async function exportIcs() {
     const a = Object.assign(document.createElement("a"), { href: url, download: "biseosil.ics" });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("캘린더 파일을 받았습니다. 휴대폰·구글 캘린더에서 열어 추가하세요.");
+    toast(`캘린더 파일을 받았습니다. 휴대폰·구글 캘린더에서 열어 추가하세요.${confirmedAfter()}`);
   } catch (err) {
     toast(`⚠️ ${err.message || "파일을 만들지 못했습니다."}`);
   }
@@ -564,17 +629,34 @@ function confirmDialog(title, html) {
 }
 
 async function copy(text) {
-  try { await navigator.clipboard.writeText(text); toast("복사했습니다. 카카오톡에 붙여넣으세요."); }
+  try { await navigator.clipboard.writeText(text); toast(`복사했습니다. 카카오톡에 붙여넣으세요.${confirmedAfter()}`); }
   catch { toast("복사하지 못했습니다. 직접 선택해서 복사해 주세요."); }
 }
 
+// 추정치가 아니라 실측: 실행 시작부터 결과를 확인하고 처음 확정(.ics 받기·복사)하기까지 걸린 시간.
+function confirmedAfter() {
+  if (!result || result.confirmedSec != null || !runStartedAt) return "";
+  result.confirmedSec = Math.round((performance.now() - runStartedAt) / 1000);
+  const m = Math.floor(result.confirmedSec / 60), sec = result.confirmedSec % 60;
+  const text = `시작부터 확인·확정까지 ${m ? `${m}분 ` : ""}${sec}초`;
+  $("#stats").insertAdjacentHTML("beforeend", `<p class="muted small formula">실측: ${text} (AI 처리 + 내가 검토한 시간 포함)</p>`);
+  return ` (${text})`;
+}
+
 let toastTimer;
-function toast(msg) {
+// action이 있으면 되돌리기 같은 버튼을 붙이고 더 오래 보여 준다.
+function toast(msg, action = null) {
   const t = $("#toast");
-  t.textContent = msg;
+  t.replaceChildren(document.createTextNode(msg));
+  t.classList.toggle("has-action", !!action);
+  if (action) {
+    const btn = Object.assign(document.createElement("button"), { type: "button", className: "toast-btn", textContent: action.label });
+    btn.addEventListener("click", () => { clearTimeout(toastTimer); t.classList.remove("show"); action.run(); });
+    t.append(" ", btn);
+  }
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => t.classList.remove("show"), action ? 8000 : 2600);
 }
 
 // ---------- 탭 ----------

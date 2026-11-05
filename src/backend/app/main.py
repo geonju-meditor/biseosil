@@ -75,8 +75,8 @@ def _setup_telemetry() -> None:
         )
         enable_instrumentation(enable_sensitive_data=False)
         logger.info("Application Insights 연결됨")
-    except Exception:  # noqa: BLE001
-        logger.exception("Application Insights 설정 실패")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Application Insights 설정 실패: %s", type(exc).__name__)
 
 
 class AppState:
@@ -101,7 +101,7 @@ async def lifespan(_: FastAPI):
         state.client = CopilotClient()
         await state.client.start()
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Copilot 클라이언트 시작 실패")
+        logger.error("Copilot 클라이언트 시작 실패: %s", type(exc).__name__)
         state.client, state.client_error = None, type(exc).__name__
     yield
     if state.client is not None:
@@ -114,8 +114,12 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="비서실 Biseosil", lifespan=lifespan)
 
 
-def error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def error(status: int, code: str, message: str, input_index: int | None = None) -> JSONResponse:
+    body: dict[str, object] = {"code": code, "message": message}
+    if input_index is not None:
+        # 화면이 문제 있는 입력 칸을 표시할 수 있도록 0부터 센 입력 순서를 함께 준다.
+        body["input"] = input_index
+    return JSONResponse(status_code=status, content={"error": body})
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -130,7 +134,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
 
 @app.exception_handler(Exception)
 async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
-    logger.exception("처리되지 않은 오류")
+    logger.error("처리되지 않은 오류: %s", type(exc).__name__)
     return error(500, "internal_error", "서버에서 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.")
 
 
@@ -237,14 +241,14 @@ async def run(request: Request, body: RunRequest):
         channel = item.channel or detect_channel(item.text)
         channels.append(channel)
         if is_empty(parse_input(item.text, i, item.name, channel)):
-            label = item.name or item.label or f"붙여넣은 내용 {unnamed}"
+            label = item.label or item.name or f"붙여넣은 내용 {unnamed}"
             hint = {
                 "kakao": "카카오톡 '대화 내보내기' txt를 그대로 넣어 주세요.",
                 "mail": "메일은 '보낸 사람/날짜/제목' 머리글이 있는 본문이나 .eml 파일을 넣어 주세요.",
                 "calendar": "캘린더는 BEGIN:VEVENT가 있는 .ics 파일을 넣어 주세요.",
                 "text": "내용을 한 줄 이상 넣어 주세요.",
             }[channel]
-            return error(400, "unrecognized_format", f"'{label}'에서 {CHANNEL_LABEL[channel]} 내용을 찾지 못했습니다. {hint}")
+            return error(400, "unrecognized_format", f"'{label}'에서 {CHANNEL_LABEL[channel]} 내용을 찾지 못했습니다. {hint}", i)
     if all(c == "calendar" for c in channels):
         return error(400, "invalid_request", "캘린더만으로는 분석할 메시지가 없습니다. 카카오톡·메일·메모를 함께 넣어 주세요.")
     if _rate_limited(_client_ip(request)):
@@ -283,8 +287,8 @@ async def run(request: Request, body: RunRequest):
             except TimeoutError:
                 yield fail("timeout", "분석 시간이 너무 오래 걸려 멈췄습니다. 입력 수를 줄여 다시 시도해 주세요.")
                 return
-            except Exception:  # noqa: BLE001
-                logger.exception("워크플로 실행 실패")
+            except Exception as exc:  # noqa: BLE001
+                logger.error("워크플로 실행 실패: %s", type(exc).__name__)
                 yield fail("workflow_failed", "분석 중 문제가 생겼습니다. 다시 시도해 주세요.")
                 return
             if output is None:

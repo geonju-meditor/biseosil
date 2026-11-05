@@ -178,6 +178,21 @@ async def test_injection_message_is_quarantined_before_agents():
     assert QUARANTINED in dump
 
 
+async def test_sender_and_calendar_pii_are_masked():
+    mail = "보낸 사람: noreply@vendor.com\n날짜: 2026-11-04 14:20\n제목: 견적\n\n내일까지 견적 회신 부탁드립니다.\n"
+    cal = (
+        "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:010-1234-5678 통화\nLOCATION:boss@company.co.kr 방\n"
+        "DTSTART:20261105T100000\nDTEND:20261105T110000\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+    workflow = build_workflow(Runtime(client=None), 2)
+    dump = ""
+    async for ev in workflow.run(RunInput([RawInput(mail, channel="mail"), RawInput(cal, channel="calendar")], None), stream=True):
+        if ev.type in ("progress", "output"):
+            dump += json.dumps(ev.data, ensure_ascii=False, default=str)
+    for raw in ("noreply@vendor.com", "010-1234-5678", "boss@company.co.kr"):
+        assert raw not in dump, raw
+
+
 def _events(text: str) -> list[dict]:
     return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
 
@@ -223,10 +238,11 @@ def test_api_errors_use_common_format():
     with TestClient(main.app) as client:
         res = client.post("/api/run", json={"inputs": [{"text": "카톡 아님", "channel": "kakao"}]})
         assert res.status_code == 400 and res.json()["error"]["code"] == "unrecognized_format"
-        assert set(res.json()) == {"error"} and set(res.json()["error"]) == {"code", "message"}
+        assert set(res.json()) == {"error"} and set(res.json()["error"]) == {"code", "message", "input"}
         assert "'붙여넣은 내용 1'" in res.json()["error"]["message"]
         res = client.post("/api/run", json={"inputs": [{"text": "x", "name": "팀방"}, {"text": "  \n ", "label": "붙여넣은 내용 2"}]})
         assert res.status_code == 400 and "'붙여넣은 내용 2'" in res.json()["error"]["message"]
+        assert res.json()["error"]["input"] == 1
         res = client.post("/api/run", json={"inputs": [{"text": "가" * 30_001}]})
         assert res.json()["error"]["code"] == "input_too_long"
         res = client.post("/api/run", json={"inputs": [{"text": "x"}] * 7})

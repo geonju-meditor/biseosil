@@ -153,10 +153,23 @@ class CollectorExecutor(Executor):
         await ctx.add_event(_event(self.id, "collector", "start", {"room": room.name, "index": task.index, "channel": room.channel}))
         pii: dict[str, int] = {}
         flagged: list[str] = []
+
+        def mask(value: str | None) -> str | None:
+            if not value:
+                return value
+            masked, counts = mask_pii(value)
+            for key, n in counts.items():
+                pii[key] = pii.get(key, 0) + n
+            return masked
+
+        # 본문뿐 아니라 보낸 사람(메일 주소)·방 이름·캘린더 제목/장소도 AI에 보내기 전에 가린다.
+        room.name = mask(room.name) or room.name
+        for entry in room.events:
+            entry.title = mask(entry.title) or entry.title
+            entry.location = mask(entry.location)
         for message in room.messages:
-            message.text, counts = mask_pii(message.text)
-            for key, value in counts.items():
-                pii[key] = pii.get(key, 0) + value
+            message.sender = mask(message.sender) or message.sender
+            message.text = mask(message.text) or message.text
             if looks_like_injection(message.text):
                 flagged.append(message.id)
                 # 의심 문장은 원문 대신 격리 표시만 비서에게 전달한다(모델이 지시를 읽거나 되풀이하지 않도록).
