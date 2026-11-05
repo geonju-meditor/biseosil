@@ -19,7 +19,7 @@ _INJECTION = re.compile(
     r"|ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts)"
     r"|system\s*prompt|you\s+are\s+now|역할을\s*바꿔|너는\s*이제"
     # 간접 지시: 이 글을 처리하는 비서를 직접 부르는 경우만 잡는다(일반 업무 문장의 '링크 붙여 주세요' 등은 제외).
-    r"|(이|위|아래|본|해당)\s*(메모|글|메시지|대화|메일|내용|문서)[을를]?\s*(정리|읽|요약|처리|분석)(하는|할)\s*(도우미|비서|AI|assistant|에이전트|사람|도구|모델)",
+    r"|(이|위|아래|본|해당)\s*(메모|글|메시지|대화|메일|내용|문서)[을를]?\s*(정리하|요약하|처리하|분석하|읽)(는|을)\s*(도우미|비서|AI|assistant|에이전트|모델)",
     re.IGNORECASE,
 )
 
