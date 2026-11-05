@@ -76,7 +76,10 @@ def fake_agents(monkeypatch):
                                                   evidence=Evidence(message_id="s1-m9", quote="광고비 집행 내역 엑셀 어디 있는지 아세요?"))]),
     }
 
-    async def run_json_agent(agent, prompt, schema, emit, timeout=75):
+    seen: dict[type, object] = {}
+
+    async def run_json_agent(agent, prompt, schema, emit, timeout=75, session=None):
+        seen[schema] = session
         assert "<input>" in prompt and "</input>" in prompt
         assert "010-" not in prompt, "개인정보는 모델 호출 전에 가려야 한다"
         if schema is ReplyResult:
@@ -86,8 +89,13 @@ def fake_agents(monkeypatch):
         await emit("delta", {"chars": 10, "tail": "{...}"})
         return results[schema].model_copy(deep=True)
 
-    monkeypatch.setattr(A, "build_agent", lambda *a, **k: object())
+    class FakeAgent:
+        def create_session(self):
+            return object()
+
+    monkeypatch.setattr(A, "build_agent", lambda *a, **k: FakeAgent())
     monkeypatch.setattr(A, "run_json_agent", run_json_agent)
+    return seen
 
 
 async def test_workflow_reviews_and_isolates_errors(fake_agents):
@@ -109,6 +117,9 @@ async def test_workflow_reviews_and_isolates_errors(fake_agents):
     assert [(t["from"], t["to"]) for t in talk] == [("review", "schedule"), ("schedule", "review"), ("review", "user")]
     assert talk[1]["text"] == "빈 시간을 찾았어요."
     assert "다시 겹쳐서" in talk[2]["text"], "검토 비서가 잘못된 조정안을 고쳤다고 알린다"
+    assert fake_agents[ScheduleRevision] is not None and fake_agents[ScheduleRevision] is fake_agents[ScheduleResult], (
+        "조정 대화는 일정 비서의 첫 Copilot 세션을 이어 쓴다"
+    )
     assert output["fallbacks"] == ["reply"] and not output["errors"], "모델 호출이 실패한 비서는 규칙 기반으로 대체"
     assert output["replies"], "대체 비서가 답장 결과를 채운다"
     assert any(p["node"] == "reply" and p["status"] == "fallback" for p in progress)

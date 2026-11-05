@@ -92,7 +92,7 @@ flowchart TD
 - `resolve_korean_date(expression, reference_date)`: "다음주 화요일", "11월 14일" 등을 날짜로 바꾼다.
   Agent Framework `@tool`로 일정 비서에 등록하고, 호출 입력·결과를 진행판에 표시한다.
 - `find_free_slots(date, duration_min)`: 내 캘린더와 제안 일정을 피해 그날 09:00~18:00의 빈 시간을
-  돌려준다. 조정 대화에서 일정 비서(`schedule-revise`)에 등록한다.
+  돌려준다. 일정 비서에 함께 등록하되, 검토 전에는 "아직 검토 전" 응답만 돌려주고 조정 대화에서만 실제 빈 시간을 준다.
 - Copilot 세션은 허용 목록 권한 처리기로 **우리가 정의한 함수 도구만** 허용한다. 파일·셸 등 내장
   도구는 `available_tools`에서 제외하고 권한 요청도 거부한다.
 
@@ -120,6 +120,9 @@ flowchart TD
    검토 비서는 각 조정안이 내 캘린더·제안 일정·이미 고른 조정안과 다시 겹치는지 확인하고, 겹치거나 빠졌거나
    모델 호출이 실패하면 규칙으로 가장 가까운 빈 시간을 고른다. 대화는 `talk` 진행 이벤트로 흐르고, 결과의
    `review.dialogue`와 일정별 `resolution`에 남는다. 실제 일정은 바꾸지 않는다.
+   일정 비서는 처음 실행할 때 `agent.create_session()`으로 만든 Agent Framework `AgentSession`을 실행 단위
+   공유 객체(`ScheduleSession`)에 보관하고, 조정 요청은 **같은 세션을 이어서**(`run(..., session=...)`) 보낸다.
+   그래서 일정 비서는 처음 읽은 메시지·일정 맥락을 기억한 채 조정안을 낸다. 세션은 실행이 끝나면 버린다.
 
 ### 3.7 대체 비서 (`AGENT_PROVIDER`)
 

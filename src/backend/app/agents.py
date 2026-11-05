@@ -68,6 +68,7 @@ reference_date에는 그 말이 나온 메시지의 날짜를 넣는다. 직접 
 my_attendance: 내가 참석하기로 한 일정이면 confirmed, 참석이나 가능 여부를 요청받았으면 requested, 그 외 unknown.
 <calendar> 안의 기존 일정은 이미 내 캘린더에 있는 것이다. 같은 일정은 다시 제안하지 않고,
 새 일정이 기존 일정과 겹치면 conflicts에 짧은 문장으로 적는다. 시간은 24시간 HH:MM, 끝 시간을 모르면 null.
+find_free_slots 도구는 나중에 검토 비서가 조정을 요청할 때만 쓴다.
 
 {SAFETY_RULES}
 
@@ -155,7 +156,15 @@ def make_date_tool(emit: Emit):
     return resolve_date
 
 
-def make_slot_tool(finder: Callable[[str, int], list[str]], emit: Emit):
+class SlotDesk:
+    """find_free_slots 도구가 쓸 빈 시간 계산기. 일정 비서를 만들 때 도구를 등록하고, 검토 단계에서 계산기를 채운다."""
+
+    def __init__(self) -> None:
+        self.finder: Callable[[str, int], list[str]] | None = None
+        self.emit: Emit | None = None
+
+
+def make_slot_tool(desk: SlotDesk):
     from agent_framework import tool
 
     @tool(
@@ -164,9 +173,12 @@ def make_slot_tool(finder: Callable[[str, int], list[str]], emit: Emit):
         "'HH:MM~HH:MM' 목록으로 돌려준다.",
     )
     async def find_free_slots(date: str, duration_min: int = 60) -> str:
-        slots = finder(date, duration_min)
+        if desk.finder is None:
+            return "아직 검토 전이라 빈 시간을 계산할 수 없음"
+        slots = desk.finder(date, duration_min)
         output = ", ".join(slots) if slots else "빈 시간 없음"
-        await emit("tool", {"tool": "find_free_slots", "input": date, "reference": f"{duration_min}분", "output": output})
+        if desk.emit:
+            await desk.emit("tool", {"tool": "find_free_slots", "input": date, "reference": f"{duration_min}분", "output": output})
         return output
 
     return find_free_slots
@@ -194,13 +206,14 @@ async def run_json_agent(
     emit: Emit,
     *,
     timeout: float = 75,
+    session: Any = None,
 ) -> T:
     """스트리밍으로 실행하고 pydantic 스키마로 검증한다. 실패하면 이유를 알려 주고 1회 재시도한다."""
 
     async def attempt(text_prompt: str) -> str:
         chunks: list[str] = []
         last_emit = 0.0
-        async for update in agent.run(text_prompt, stream=True):
+        async for update in agent.run(text_prompt, stream=True, session=session):
             if update.text:
                 chunks.append(update.text)
                 now = time.monotonic()

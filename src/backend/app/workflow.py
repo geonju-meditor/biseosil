@@ -87,6 +87,15 @@ class SpecialistOutput:
 
 
 @dataclass
+class ScheduleSession:
+    """한 번의 실행 동안 일정 비서의 Copilot 세션을 검토 비서와 공유한다(메시지는 직렬화되므로 따로 둔다)."""
+
+    agent: Any = None
+    session: Any = None
+    desk: Any = None
+
+
+@dataclass
 class Runtime:
     client: Any
     model: str = ""
@@ -249,10 +258,11 @@ class LeadExecutor(Executor):
 
 
 class SpecialistExecutor(Executor):
-    def __init__(self, kind: str, runtime: Runtime) -> None:
+    def __init__(self, kind: str, runtime: Runtime, shared: ScheduleSession | None = None) -> None:
         super().__init__(id=kind)
         self._kind = kind
         self._runtime = runtime
+        self._shared = shared
 
     async def _deterministic(self, briefing: Briefing, emit: A.Emit) -> BaseModel:
         rooms = [c.room for c in briefing.rooms]
@@ -286,10 +296,14 @@ class SpecialistExecutor(Executor):
             if briefing.mode == "deterministic":
                 result = await self._deterministic(briefing, emit)
             else:
-                tools = [A.make_date_tool(emit)] if self._kind == "schedule" else None
+                desk = A.SlotDesk() if self._kind == "schedule" else None
+                tools = [A.make_date_tool(emit), A.make_slot_tool(desk)] if desk else None
                 agent = A.build_agent(self._runtime.client, self._kind, instructions, self._runtime.model, tools)
-                result = await A.run_json_agent(agent, prompt, schema, emit)
+                session = agent.create_session() if desk else None
+                result = await A.run_json_agent(agent, prompt, schema, emit, session=session)
             await emit("done", {"count": _count(result)})
+            if briefing.mode != "deterministic" and self._shared is not None and desk:
+                self._shared.agent, self._shared.session, self._shared.desk = agent, session, desk
             await ctx.send_message(SpecialistOutput(self._kind, briefing, result, None))
         except A.AgentRunError as exc:
             await self._fallback(briefing, emit, ctx, f"{label}: {exc.message}")
@@ -433,7 +447,9 @@ class Negotiation:
             return False
         return not any(overlaps(r.alt_start, r.alt_end, s, e) for s, e in self.busy(event.date, events))
 
-    async def run(self, conflicted: list[ScheduleEvent], events: list[ScheduleEvent], clash: dict[int, list[str]]) -> dict[int, dict[str, Any]]:
+    async def run(
+        self, conflicted: list[ScheduleEvent], events: list[ScheduleEvent], clash: dict[int, list[str]], origin: ScheduleSession | None = None
+    ) -> dict[int, dict[str, Any]]:
         ids = {f"e{i + 1}": e for i, e in enumerate(conflicted)}
         first = conflicted[0]
         await self.talk(
@@ -452,10 +468,18 @@ class Negotiation:
                 f"{k} | {e.title} | {e.date} {e.start}~{e.end or '?'} | my_attendance={e.my_attendance} | {', '.join(clash[id(e)])}"
                 for k, e in ids.items()
             )
+            request = f"<input>\n<conflicts>\n{lines}\n</conflicts>\n</input>"
             try:
-                tool = A.make_slot_tool(lambda d, m: free_slots(self.busy(d, events), m, limit=5), emit)
-                agent = A.build_agent(self.runtime.client, "schedule-revise", A.REVISE_INSTRUCTIONS, self.runtime.model, [tool])
-                answer = await A.run_json_agent(agent, f"<input>\n<conflicts>\n{lines}\n</conflicts>\n</input>", ScheduleRevision, emit, timeout=60)
+                if origin and origin.agent and origin.session and origin.desk:
+                    # 첫 일정 정리 때의 Copilot 세션을 이어 써서, 원문 메시지 맥락을 다시 보내지 않고 조정만 요청한다.
+                    desk, agent, session = origin.desk, origin.agent, origin.session
+                    request = f"[검토 비서의 조정 요청 — 이번에는 아래 지시와 JSON 형식을 따른다]\n{A.REVISE_INSTRUCTIONS}\n\n{request}"
+                else:
+                    desk, session = A.SlotDesk(), None
+                    agent = A.build_agent(self.runtime.client, "schedule-revise", A.REVISE_INSTRUCTIONS, self.runtime.model, [A.make_slot_tool(desk)])
+                desk.finder = lambda d, m: free_slots(self.busy(d, events), m, limit=5)
+                desk.emit = emit
+                answer = await A.run_json_agent(agent, request, ScheduleRevision, emit, timeout=60, session=session)
             except Exception:  # noqa: BLE001
                 await emit("fallback", {"message": "조정 요청에 AI가 답하지 못해 규칙으로 빈 시간을 찾습니다."})
         given = {r.event_id: r for r in (answer.resolutions if answer else [])}
@@ -486,9 +510,10 @@ class Negotiation:
 class ReviewExecutor(Executor):
     """검토 비서: 원문에 근거가 없는 항목을 버리고, 중복을 합치고, 일정 충돌·마감 몰림을 계산한다."""
 
-    def __init__(self, runtime: Runtime | None = None) -> None:
+    def __init__(self, runtime: Runtime | None = None, shared: ScheduleSession | None = None) -> None:
         super().__init__(id="review")
         self._runtime = runtime or Runtime(client=None, provider="deterministic")
+        self._shared = shared
 
     @handler
     async def run(self, outputs: list[SpecialistOutput], ctx: WorkflowContext[Any, dict[str, Any]]) -> None:
@@ -580,7 +605,7 @@ class ReviewExecutor(Executor):
         conflicted = [e for e in timed if id(e) in clash]
         if conflicted:
             talks = Negotiation(self._runtime, ctx, briefing)
-            resolutions = await talks.run(conflicted, events, clash)
+            resolutions = await talks.run(conflicted, events, clash, self._shared)
             dialogue = talks.dialogue
         crunch: dict[str, list[str]] = {}
         for t in todos:
@@ -638,8 +663,9 @@ def build_workflow(runtime: Runtime, input_count: int):
     collectors = [CollectorExecutor(i) for i in range(input_count)]
     intake = IntakeExecutor([c.id for c in collectors])
     lead = LeadExecutor(runtime)
-    specialists = [SpecialistExecutor(kind, runtime) for kind in SPECIALISTS]
-    review = ReviewExecutor(runtime)
+    shared = ScheduleSession()
+    specialists = [SpecialistExecutor(kind, runtime, shared if kind == "schedule" else None) for kind in SPECIALISTS]
+    review = ReviewExecutor(runtime, shared)
     builder = WorkflowBuilder(start_executor=intake, name="biseosil")
     if len(collectors) == 1:
         # fan-out/fan-in은 대상이 2개 이상이어야 하므로 입력 1건은 직선 연결로 처리한다.
