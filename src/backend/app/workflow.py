@@ -337,6 +337,7 @@ def _count(result: BaseModel) -> int:
 
 
 _SPACE = re.compile(r"\s+")
+_ATTEND = re.compile(r"참석|참여|출석|들어가기|가기$|가기\s*\(")
 _PUNCT = re.compile(r"[\s\"'“”‘’`.,!?~·…\-\[\]()]+")
 
 
@@ -580,10 +581,24 @@ class ReviewExecutor(Executor):
                     kept.append(e)
             events = kept
             events.sort(key=lambda e: (e.date, e.start or ""))
+            # 일정 탭에 있는 같은 원문으로 만든 '참석하기'류 할 일은 일정과 같은 건이므로 뺀다.
+            event_ids = {e.evidence.message_id for e in events}
+            kept_todos = []
+            for t in todos:
+                if t.evidence.message_id in event_ids and _ATTEND.search(t.title):
+                    removed.append({"kind": "dup", "title": t.title, "reason": "일정 탭과 같은 건"})
+                else:
+                    kept_todos.append(t)
+            todos = kept_todos
         debts: list[Any] = []
         if (o := by_kind.get("reply")) and isinstance(o.result, ReplyResult):
             debts = [d for d in o.result.debts if verify("reply", d.topic, d)]
             debts = dedupe(debts, lambda d: d.evidence.message_id + d.direction)
+            # 메모는 내가 적은 글이라 답할 상대가 없다. 할 일 탭에만 둔다.
+            memo = [d for d in debts if index[d.evidence.message_id][0].channel == "text"]
+            for d in memo:
+                removed.append({"kind": "dup", "title": d.topic, "reason": "메모는 할 일 탭과 같은 건"})
+            debts = [d for d in debts if d not in memo]
 
         timed = [e for e in events if e.start]
         clash: dict[int, list[str]] = {}

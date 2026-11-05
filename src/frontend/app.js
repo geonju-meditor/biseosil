@@ -344,11 +344,12 @@ function fmtDate(iso) {
   const w = WEEK[new Date(y, m - 1, d).getDay()];
   return `${m}/${d}(${w})`;
 }
-function dday(iso) {
+function dday(iso, time) {
   if (!iso || !result) return "";
   const ref = new Date(result.referenceDate);
   const diff = Math.round((new Date(iso) - ref) / 86400000);
-  if (diff < 0) return `<span class="dday late">지남</span>`;
+  const nowKst = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false }).slice(0, 5);
+  if (diff < 0 || (diff === 0 && time && time < nowKst)) return `<span class="dday late">지남</span>`;
   if (diff === 0) return `<span class="dday today">오늘</span>`;
   return `<span class="dday${diff <= 2 ? " soon" : ""}">D-${diff}</span>`;
 }
@@ -417,7 +418,7 @@ function renderTodos() {
         <label for="todo-${i}" class="title">${esc(t.title)}</label>
         <span class="pri ${t.priority}">${PRI[t.priority]}</span>
         <button class="icon" data-act="del" data-kind="todos" data-i="${i}" aria-label="${esc(t.title)} 빼기">✕</button></div>
-      <p class="sub">${t.due ? `${dday(t.due)} ${fmtDate(t.due)} 까지` : "기한 없음"} ${t.due_text ? `<span class="muted">(“${esc(t.due_text)}”)</span>` : ""} · ${esc(t.room)}</p>
+      <p class="sub">${t.due ? `${dday(t.due)} ${fmtDate(t.due)} 까지` : "기한 없음"} ${t.due_text ? `<span class="muted">(“${esc(t.due_text)}”)</span>` : ""} · ${esc(t.room)} · <span class="badge ai small">AI 생성</span></p>
       ${evidenceHtml(t.evidence)}</li>`).join("")}</ul>`;
 }
 
@@ -434,7 +435,7 @@ function renderEvents() {
         <label for="ev-${i}" class="title">${esc(e.title)}</label>
         <span class="pri ${e.my_attendance === "confirmed" ? "low" : "mid"}">${ATTEND[e.my_attendance]}</span>
         <button class="icon" data-act="del" data-kind="events" data-i="${i}" aria-label="${esc(e.title)} 빼기">✕</button></div>
-      <p class="sub">${dday(e.date)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)}</p>
+      <p class="sub">${dday(e.date, e.start)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)} · <span class="badge ai small">AI 생성</span></p>
       ${e.conflicts?.length ? `<p class="clash">⚠️ 겹침: ${e.conflicts.map(esc).join(", ")}</p>` : ""}
       ${e.resolution ? `<p class="fix"><span class="chip blue">${FIX[e.resolution.action]}</span> ${esc(e.resolution.note)}</p>` : ""}
       ${evidenceHtml(e.evidence)}</li>`).join("")}</ul>`;
@@ -449,7 +450,7 @@ function renderReplies() {
       <div class="row"><span class="title">${esc(r.counterpart)} — ${esc(r.topic)}</span>
         ${r.sent ? `<span class="pri low">답장함</span>` : ""}
         <button class="icon" data-act="del" data-kind="replies" data-i="${r.i}" aria-label="${esc(r.topic)} 빼기">✕</button></div>
-      <p class="sub">${esc(r.room)}</p>
+      <p class="sub">${esc(r.room)} · <span class="badge ai small">AI 생성</span></p>
       ${evidenceHtml(r.evidence)}
       ${r.draft != null ? `<label class="draft-label" for="draft-${r.i}">답장 초안 <span class="badge ai small">AI 생성</span> <span class="muted small">[ ]는 직접 채우기</span></label>
       <textarea id="draft-${r.i}" class="draft" data-act="draft" data-i="${r.i}" rows="3">${esc(r.draft)}</textarea>

@@ -137,7 +137,8 @@ async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # 인그레스가 맨 뒤에 덧붙인 값만 믿는다. 앞의 값은 클라이언트가 위조할 수 있다.
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -291,7 +292,12 @@ async def run(request: Request, body: RunRequest):
                 return
             elapsed = time.monotonic() - started
             messages = sum(i["messages"] for i in output["inputs"])
-            items = len(output["todos"]) + len(output["events"]) + len(output["replies"])
+            # 같은 원문에서 나온 항목은 한 번만 센다(손으로 정리해도 한 번 처리하므로).
+            items = len(
+                {(t["evidence"]["message_id"]) for t in output["todos"]}
+                | {(e["evidence"]["message_id"]) for e in output["events"]}
+                | {(r["evidence"]["message_id"]) for r in output["replies"]}
+            )
             manual_sec = messages * SECONDS_PER_MESSAGE + items * SECONDS_PER_ITEM
             stats = {
                 "elapsedSec": round(elapsed, 1),

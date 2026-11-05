@@ -17,7 +17,9 @@ _INJECTION = re.compile(
     r"(이전|앞의|위의|기존)\s*(의\s*)?(모든\s*)?(지시|명령|규칙|프롬프트)[^\n]{0,12}(무시|잊)"
     r"|시스템\s*(안내|메시지|프롬프트)\s*[:：]"
     r"|ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts)"
-    r"|system\s*prompt|you\s+are\s+now|역할을\s*바꿔|너는\s*이제",
+    r"|system\s*prompt|you\s+are\s+now|역할을\s*바꿔|너는\s*이제"
+    r"|(도우미|비서|AI|assistant|에이전트|정리하는\s*(사람|도구))[은는이가도]?\s[^\n]{0,40}(할\s*일|답장|초안|결과|목록)[^\n]{0,30}(넣|추가|붙여|출력|써|적어)"
+    r"|(링크|URL|url)[^\n]{0,15}(붙여|넣어|추가해)",
     re.IGNORECASE,
 )
 
