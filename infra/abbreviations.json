@@ -1,0 +1,10 @@
+{
+  "resourceGroup": "rg",
+  "containerRegistry": "cr",
+  "logAnalyticsWorkspace": "log",
+  "applicationInsights": "appi",
+  "keyVault": "kv",
+  "containerAppEnvironment": "cae",
+  "containerApp": "ca",
+  "userAssignedIdentity": "id"
+}

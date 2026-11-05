@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: biseosil
+
+metadata:
+  template: azd-init
+
+services:
+  app:
+    project: ./src/backend
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: ../
+      remoteBuild: true
