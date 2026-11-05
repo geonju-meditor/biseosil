@@ -62,6 +62,7 @@ flowchart TD
   c1 & c2 & cN -->|fan-in| lead[lead 팀장: 요약·우선순위·작업 지시]
   lead -->|fan-out| todo[todo 할 일+업무 장부] & schedule[schedule 일정 + 날짜 도구] & reply[reply 답장]
   todo & schedule & reply -->|fan-in| review[review 검토: 근거 검증·중복·충돌] --> out[결과]
+  review <-.->|충돌 조정 요청 ↔ 조정안| revise[schedule 일정 비서 재호출 + find_free_slots]
 ```
 
 `WorkflowBuilder`의 `add_fan_out_edges` / `add_fan_in_edges`로 구성한다. `GET /api/workflow`가
@@ -77,7 +78,7 @@ flowchart TD
 | todo | `GitHubCopilotAgent` | 메시지 + brief → `TodoResult`(내 할 일 + 업무 장부: 담당·결정·담당자 없는 일) |
 | schedule | `GitHubCopilotAgent` + 도구 | 메시지 + 기존 일정 + brief → `ScheduleResult`(일정 제안, 충돌) |
 | reply | `GitHubCopilotAgent` | 메시지 + brief → `ReplyResult`(i_owe / they_owe, 초안) |
-| review | 결정적 | 전문 비서 결과 → 근거 검증, 중복 병합, 기존 일정과 충돌·마감 몰림 계산 |
+| review | 결정적 | 전문 비서 결과 → 근거 검증, 중복 병합, 기존 일정과 충돌·마감 몰림 계산. 충돌이 있으면 일정 비서와 조정 대화(3.6-8) |
 
 ### 3.3 메시지 ID와 컨텍스트
 
@@ -90,6 +91,8 @@ flowchart TD
 
 - `resolve_korean_date(expression, reference_date)`: "다음주 화요일", "11월 14일" 등을 날짜로 바꾼다.
   Agent Framework `@tool`로 일정 비서에 등록하고, 호출 입력·결과를 진행판에 표시한다.
+- `find_free_slots(date, duration_min)`: 내 캘린더와 제안 일정을 피해 그날 09:00~18:00의 빈 시간을
+  돌려준다. 조정 대화에서 일정 비서(`schedule-revise`)에 등록한다.
 - Copilot 세션은 허용 목록 권한 처리기로 **우리가 정의한 함수 도구만** 허용한다. 파일·셸 등 내장
   도구는 `available_tools`에서 제외하고 권한 요청도 거부한다.
 
@@ -111,6 +114,12 @@ flowchart TD
    해당 일정에 `conflicts`를 붙인다. 화면은 충돌 일정을 내보내기에서 기본 해제하고 확인 창에 겹침을 표시한다.
 6. 같은 날 마감이 3개 이상이면 마감 몰림으로 표시한다.
 7. 제거된 항목은 이유와 함께 `review.removed`에 남긴다.
+8. **조정 대화** (`workflow.py`의 `Negotiation`): 충돌 일정이 있으면 검토 비서가 일정 비서에게 충돌 목록을
+   `<input>` 안에 넣어 보낸다. 일정 비서(`REVISE_INSTRUCTIONS`, 출력 `ScheduleRevision`)가 `find_free_slots`로
+   일정마다 `propose_time`(참석 요청 일정의 대안 시간) / `move_mine`(겹치는 내 일정을 옮길 시간) / `keep`을 낸다.
+   검토 비서는 각 조정안이 내 캘린더·제안 일정·이미 고른 조정안과 다시 겹치는지 확인하고, 겹치거나 빠졌거나
+   모델 호출이 실패하면 규칙으로 가장 가까운 빈 시간을 고른다. 대화는 `talk` 진행 이벤트로 흐르고, 결과의
+   `review.dialogue`와 일정별 `resolution`에 남는다. 실제 일정은 바꾸지 않는다.
 
 ### 3.7 대체 비서 (`AGENT_PROVIDER`)
 
@@ -159,7 +168,7 @@ flowchart TD
 | 1 | `RUN_STARTED` | `threadId`, `runId` |
 | 2 | `CUSTOM` `workflow.graph` | 노드·단계 |
 | 3 | `STEP_STARTED` | `stepName` = 노드 ID |
-| 4 | `CUSTOM` `agent.progress` | `{node, status: start|delta|retry|done|error, data}` |
+| 4 | `CUSTOM` `agent.progress` | `{node, status: start|delta|retry|fallback|talk|done|error, data}` (`talk`: `{from, to, text}` 비서 간 대화) |
 | 5 | `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` / `TOOL_CALL_RESULT` | 날짜 도구 호출 |
 | 6 | `STEP_FINISHED` | 노드 완료 |
 | 7 | `CUSTOM` `workflow.result` | 최종 결과(아래) |
@@ -168,8 +177,8 @@ flowchart TD
 | 오류 | `RUN_ERROR` | `code`(`timeout`, `workflow_failed`, `no_result`)와 일반화된 메시지 |
 
 최종 결과 주요 필드: `me`, `referenceDate`, `mode`, `inputs[{name, channel, messages, events, pii, flagged}]`,
-`lead`, `todos`, `ledger{assignments, decisions, open_questions}`, `events`, `calendar`(기존 일정),
-`replies`, `review{removed, conflicts, crunch}`, `errors`, `source`(메시지 ID → 원문), `stats`.
+`lead`, `todos`, `ledger{assignments, decisions, open_questions}`, `events`(일정별 `conflicts`, `resolution`), `calendar`(기존 일정),
+`replies`, `review{removed, conflicts, crunch, dialogue}`, `errors`, `source`(메시지 ID → 원문), `stats`.
 
 `stats` = `{elapsedSec, messages, items, manualMin, formula}`.
 수동 정리 추정 = 메시지 수 × 6초 + 결과 항목 수 × 45초.

@@ -220,3 +220,13 @@ dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .pane, .items, .item, .stats, .summary, #alerts { min-width: 0; overflow-wrap: anywhere; }
 section { scroll-margin-top: 72px; }
 .stage-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.talk-wrap { margin-top: 20px; background: var(--soft); border-radius: var(--r); padding: 16px 18px; }
+.talk-wrap .group { margin-top: 0; }
+.talk { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.talk .msg { display: grid; gap: 4px; max-width: 560px; }
+.talk .msg.from-schedule { justify-self: end; text-align: right; }
+.talk .who { margin: 0; font-size: .8rem; font-weight: 600; color: var(--sub); }
+.talk .who span { color: var(--muted); font-weight: 500; }
+.talk .bubble { margin: 0; padding: 10px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); font-size: .9rem; line-height: 1.5; text-align: left; }
+.talk .from-schedule .bubble { background: var(--brand-soft); border-color: transparent; }
+.fix { margin: 8px 0 0; font-size: .86rem; color: var(--sub); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }

@@ -24,7 +24,7 @@ from . import fallback as F
 from .channels import CHANNEL_LABEL, parse_input
 from .kakao import CalendarEntry, Message, Room, guess_me
 from .safety import QUARANTINED, looks_like_injection, mask_pii
-from .schemas import LeadPlan, ReplyResult, ScheduleResult, TodoResult
+from .schemas import LeadPlan, ReplyResult, Resolution, ScheduleEvent, ScheduleResult, ScheduleRevision, TodoResult
 
 WORKFLOW_PATTERN = "fan-out(채널별 수집) → 팀장 → fan-out(전문 비서) → fan-in(검토)"
 
@@ -373,11 +373,122 @@ def calendar_conflict(date: str, start: str | None, entry: CalendarEntry, end: s
     return date == entry.date and overlaps(start, end, entry.start, entry.end)
 
 
+def _hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def free_slots(busy: list[tuple[str | None, str | None]], duration: int = 60, limit: int = 3, near: str | None = None) -> list[str]:
+    """09:00~18:00 사이에서 busy 구간과 겹치지 않는 빈 시간을 30분 단위로 찾는다. near가 있으면 그 시각에 가까운 순."""
+
+    duration = max(15, min(int(duration or 60), 240))
+    spans = [_span(s, e) for s, e in busy if s]
+    slots: list[str] = []
+    for t in range(9 * 60, 18 * 60 - duration + 1, 30):
+        if all(not (t < e and s < t + duration) for s, e in spans):
+            slots.append(f"{_hhmm(t)}~{_hhmm(t + duration)}")
+    if near and _minutes(near) >= 0:
+        slots.sort(key=lambda x: abs(_minutes(x[:5]) - _minutes(near)))
+    return slots[:limit]
+
+
+class Negotiation:
+    """검토 비서 ↔ 일정 비서 조정 대화. 검토 비서가 충돌을 알리면 일정 비서가 빈 시간을 찾아 조정안을 낸다."""
+
+    def __init__(self, runtime: Runtime, ctx: WorkflowContext[Any, dict[str, Any]], briefing: Briefing) -> None:
+        self.runtime, self.ctx, self.briefing = runtime, ctx, briefing
+        self.dialogue: list[dict[str, str]] = []
+        self.reserved: list[tuple[str, str | None, str | None]] = []
+
+    async def talk(self, sender: str, to: str, text: str) -> None:
+        self.dialogue.append({"from": sender, "to": to, "text": text})
+        await self.ctx.add_event(_event(sender, sender, "talk", {"from": sender, "to": to, "text": text}))
+
+    def busy(self, date: str, events: list[ScheduleEvent]) -> list[tuple[str | None, str | None]]:
+        return [(c.start, c.end) for c in self.briefing.calendar if c.date == date] + [
+            (e.start, e.end) for e in events if e.date == date
+        ] + [(s, e) for d, s, e in self.reserved if d == date]
+
+    def _rule(self, event: ScheduleEvent, events: list[ScheduleEvent]) -> Resolution:
+        mine = next((c for c in self.briefing.calendar if calendar_conflict(event.date, event.start, c, event.end)), None)
+        if event.my_attendance == "requested" or not mine:
+            s, e = _span(event.start, event.end)
+            slots = free_slots(self.busy(event.date, events), e - s, near=event.start)
+            if slots and event.my_attendance == "requested":
+                start, end = slots[0].split("~")
+                return Resolution(event_id="", action="propose_time", alt_start=start, alt_end=end,
+                                  note=f"참석 여부를 묻는 일정이라 {slots[0]}을 대안으로 답할 수 있어요.")
+            return Resolution(event_id="", action="keep", note="겹치는 일정 중 하나만 고르세요.")
+        s, e = _span(mine.start, mine.end)
+        slots = free_slots(self.busy(event.date, events), e - s, near=mine.start)
+        if not slots:
+            return Resolution(event_id="", action="keep", note="그날 빈 시간이 없어 직접 조정이 필요해요.")
+        start, end = slots[0].split("~")
+        return Resolution(event_id="", action="move_mine", alt_start=start, alt_end=end,
+                          note=f"이 회의 시간은 내가 바꿀 수 없어 내 일정 '{mine.title}'을(를) {slots[0]}로 옮기는 걸 제안해요.")
+
+    def _valid(self, r: Resolution, event: ScheduleEvent, events: list[ScheduleEvent]) -> bool:
+        if r.action == "keep":
+            return bool(r.note)
+        if _minutes(r.alt_start) < 0:
+            return False
+        return not any(overlaps(r.alt_start, r.alt_end, s, e) for s, e in self.busy(event.date, events))
+
+    async def run(self, conflicted: list[ScheduleEvent], events: list[ScheduleEvent], clash: dict[int, list[str]]) -> dict[int, dict[str, Any]]:
+        ids = {f"e{i + 1}": e for i, e in enumerate(conflicted)}
+        first = conflicted[0]
+        await self.talk(
+            "review", "schedule",
+            f"제안 일정 {len(conflicted)}건이 겹쳐요. 예: '{first.title}' {first.date} {first.start} — {clash[id(first)][0]}. "
+            "빈 시간을 찾아 조정안을 주세요.",
+        )
+        await self.ctx.add_event(_event("schedule", "schedule", "start", {"brief": f"검토 비서 요청: 충돌 {len(conflicted)}건 조정"}))
+
+        async def emit(status: str, data: Any) -> None:
+            await self.ctx.add_event(_event("schedule", "schedule", status, data))
+
+        answer: ScheduleRevision | None = None
+        if self.briefing.mode != "deterministic":
+            lines = "\n".join(
+                f"{k} | {e.title} | {e.date} {e.start}~{e.end or '?'} | my_attendance={e.my_attendance} | {', '.join(clash[id(e)])}"
+                for k, e in ids.items()
+            )
+            try:
+                tool = A.make_slot_tool(lambda d, m: free_slots(self.busy(d, events), m, limit=5), emit)
+                agent = A.build_agent(self.runtime.client, "schedule-revise", A.REVISE_INSTRUCTIONS, self.runtime.model, [tool])
+                answer = await A.run_json_agent(agent, f"<input>\n<conflicts>\n{lines}\n</conflicts>\n</input>", ScheduleRevision, emit, timeout=60)
+            except Exception:  # noqa: BLE001
+                await emit("fallback", {"message": "조정 요청에 AI가 답하지 못해 규칙으로 빈 시간을 찾습니다."})
+        given = {r.event_id: r for r in (answer.resolutions if answer else [])}
+        out: dict[int, dict[str, Any]] = {}
+        corrected = 0
+        for k, e in ids.items():
+            r = given.get(k)
+            if not r or not self._valid(r, e, events):
+                corrected += 1 if r else 0
+                r = self._rule(e, events)
+                if r.alt_start:
+                    await emit("tool", {"tool": "find_free_slots", "input": e.date, "reference": "규칙", "output": f"{r.alt_start}~{r.alt_end}"})
+            if r.alt_start:
+                self.reserved.append((e.date, r.alt_start, r.alt_end))
+            out[id(e)] = r.model_dump(exclude={"event_id"})
+        moved = sum(1 for r in out.values() if r["action"] != "keep")
+        reply = (answer.reply if answer and answer.reply else "") or f"충돌 {len(ids)}건 중 {moved}건은 빈 시간을 찾아 조정안을 붙였어요."
+        await self.talk("schedule", "review", reply)
+        await emit("done", {"count": len(events), "revised": moved})
+        note = f" 그중 {corrected}건은 다시 겹쳐서 다른 빈 시간으로 바꿨어요." if corrected else ""
+        await self.talk(
+            "review", "user",
+            f"조정안 {moved}건을 다시 확인했어요.{note} 일정 탭에서 보고 직접 정하세요." if moved else "조정할 빈 시간이 없어 겹침만 표시했어요.",
+        )
+        return out
+
+
 class ReviewExecutor(Executor):
     """검토 비서: 원문에 근거가 없는 항목을 버리고, 중복을 합치고, 일정 충돌·마감 몰림을 계산한다."""
 
-    def __init__(self) -> None:
+    def __init__(self, runtime: Runtime | None = None) -> None:
         super().__init__(id="review")
+        self._runtime = runtime or Runtime(client=None, provider="deterministic")
 
     @handler
     async def run(self, outputs: list[SpecialistOutput], ctx: WorkflowContext[Any, dict[str, Any]]) -> None:
@@ -464,6 +575,13 @@ class ReviewExecutor(Executor):
                         f"{a.date} {a.start} '{a.title}'이(가) 내 캘린더의 '{entry.title}'({entry.start}~{entry.end or ''})과(와) 겹칩니다."
                     )
                     clash.setdefault(id(a), []).append(f"내 캘린더 '{entry.title}'({entry.start})과(와) 겹침")
+        resolutions: dict[int, dict[str, Any]] = {}
+        dialogue: list[dict[str, str]] = []
+        conflicted = [e for e in timed if id(e) in clash]
+        if conflicted:
+            talks = Negotiation(self._runtime, ctx, briefing)
+            resolutions = await talks.run(conflicted, events, clash)
+            dialogue = talks.dialogue
         crunch: dict[str, list[str]] = {}
         for t in todos:
             if t.due:
@@ -473,7 +591,7 @@ class ReviewExecutor(Executor):
         errors = {o.kind: o.error for o in outputs if o.error}
         if briefing.lead_error:
             errors["lead"] = briefing.lead_error
-        review = {"removed": removed, "conflicts": conflicts, "crunch": crunch_list}
+        review = {"removed": removed, "conflicts": conflicts, "crunch": crunch_list, "dialogue": dialogue}
         await ctx.add_event(_event(self.id, "review", "done", {"removed": len(removed), "conflicts": len(conflicts)}))
         await ctx.yield_output(
             {
@@ -494,7 +612,7 @@ class ReviewExecutor(Executor):
                 "lead": briefing.plan.model_dump() if briefing.plan else None,
                 "todos": [t.model_dump() for t in todos],
                 "ledger": ledger,
-                "events": [{**e.model_dump(), "conflicts": clash.get(id(e), [])} for e in events],
+                "events": [{**e.model_dump(), "conflicts": clash.get(id(e), []), "resolution": resolutions.get(id(e))} for e in events],
                 "calendar": [vars(e) for e in briefing.calendar],
                 "replies": [d.model_dump() for d in debts],
                 "review": review,
@@ -521,7 +639,7 @@ def build_workflow(runtime: Runtime, input_count: int):
     intake = IntakeExecutor([c.id for c in collectors])
     lead = LeadExecutor(runtime)
     specialists = [SpecialistExecutor(kind, runtime) for kind in SPECIALISTS]
-    review = ReviewExecutor()
+    review = ReviewExecutor(runtime)
     builder = WorkflowBuilder(start_executor=intake, name="biseosil")
     if len(collectors) == 1:
         # fan-out/fan-in은 대상이 2개 이상이어야 하므로 입력 1건은 직선 연결로 처리한다.

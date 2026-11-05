@@ -96,3 +96,18 @@ class Decision(BaseModel):
 
 
 TodoResult.model_rebuild()
+
+
+class Resolution(BaseModel):
+    event_id: str = Field(description="검토 비서가 붙인 일정 ID (예: e1)")
+    action: Literal["propose_time", "move_mine", "keep"] = "keep"
+    alt_start: str | None = Field(default=None, description="HH:MM")
+    alt_end: str | None = None
+    note: str = ""
+
+
+class ScheduleRevision(BaseModel):
+    """검토 비서의 충돌 조정 요청에 대한 일정 비서의 답."""
+
+    resolutions: list[Resolution] = []
+    reply: str = ""

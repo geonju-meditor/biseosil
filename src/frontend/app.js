@@ -15,6 +15,10 @@ const AGENTS = {
 };
 const CHANNEL = { kakao: "카카오톡", mail: "메일", calendar: "캘린더" };
 const STATUS_TEXT = { wait: "대기", start: "작업 중", done: "완료", error: "오류", retry: "다시 시도" };
+const WHO = { review: "🔍 검토 비서", schedule: "📅 일정 비서", user: "나" };
+function talkHtml(t) {
+  return `<li class="msg from-${esc(t.from)}"><p class="who">${WHO[t.from] || esc(t.from)} <span>→ ${WHO[t.to] || esc(t.to)}</span></p><p class="bubble">${esc(t.text)}</p></li>`;
+}
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
 
 let result = null;
@@ -77,6 +81,8 @@ async function run(payload) {
   $("#result-section").hidden = true;
   $("#board").innerHTML = "";
   $("#log").innerHTML = "";
+  $("#talk").innerHTML = "";
+  $("#talk-wrap").hidden = true;
   $("#board-section").hidden = false;
   $("#board-section").scrollIntoView({ behavior: "smooth", block: "start" });
   startTimer();
@@ -226,6 +232,11 @@ function handleEvent(ev) {
   const detail = $(".detail", card);
   const tail = $(".tail", card);
   switch (ev.status) {
+    case "talk":
+      $("#talk-wrap").hidden = false;
+      $("#talk").insertAdjacentHTML("beforeend", talkHtml(d));
+      log(`${WHO[d.from] || d.from} → ${WHO[d.to] || d.to}: ${d.text}`);
+      break;
     case "start":
       setStatus(card, "start");
       if (id === "intake") detail.textContent = `입력 ${d.inputs}개를 받아 채널별 수집 비서에게 나눠 줍니다.`;
@@ -274,7 +285,7 @@ function handleEvent(ev) {
       } else if (id === "review") {
         detail.textContent = `${d.removed}건 제거 · 충돌 ${d.conflicts}건`;
       } else {
-        detail.textContent = `${d.count}건${d.fallback ? " · 규칙 기반 대체" : ""}`;
+        detail.textContent = `${d.count}건${d.revised ? ` · 조정안 ${d.revised}건` : ""}${d.fallback ? " · 규칙 기반 대체" : ""}`;
       }
       $("#board-status").textContent = `${name} 완료`;
       log(`${name} 완료`);
@@ -372,6 +383,7 @@ function renderTodos() {
       ${evidenceHtml(t.evidence)}</li>`).join("")}</ul>`;
 }
 
+const FIX = { propose_time: "대안 시간", move_mine: "내 일정 옮기기", keep: "직접 확인" };
 const ATTEND = { confirmed: "참석 확정", requested: "참석 요청 받음", unknown: "참석 미정" };
 function renderEvents() {
   const pane = $("#pane-events");
@@ -386,6 +398,7 @@ function renderEvents() {
         <button class="icon" data-act="del" data-kind="events" data-i="${i}" aria-label="${esc(e.title)} 빼기">✕</button></div>
       <p class="sub">${dday(e.date)} <b>${fmtDate(e.date)}</b> ${esc(e.start || "시간 미정")}${e.end ? `~${esc(e.end)}` : ""}${e.location ? ` · 📍${esc(e.location)}` : ""} · ${esc(e.room)}</p>
       ${e.conflicts?.length ? `<p class="clash">⚠️ 겹침: ${e.conflicts.map(esc).join(", ")}</p>` : ""}
+      ${e.resolution ? `<p class="fix"><span class="chip blue">${FIX[e.resolution.action]}</span> ${esc(e.resolution.note)}</p>` : ""}
       ${evidenceHtml(e.evidence)}</li>`).join("")}</ul>`;
 }
 
@@ -430,6 +443,7 @@ function renderReview() {
   const pii = result.inputs.reduce((n, r) => n + Object.values(r.pii).reduce((a, b) => a + b, 0), 0);
   pane.innerHTML = `
     <p>모든 항목의 인용을 원문과 대조했습니다.</p>
+    ${result.review.dialogue?.length ? `<h3 class="group">비서끼리 대화</h3><ol class="talk">${result.review.dialogue.map(talkHtml).join("")}</ol>` : ""}
     <h3 class="group">지시문 의심 메시지 (${flagged.length})</h3>
     ${flagged.length ? `<ul class="items">${flagged.map((f) => `<li class="item warn"><p class="sub">${esc(f.room)} · ${esc(f.sender)} · ${esc(f.when)}</p><p class="muted small">내용을 비서에게 보내지 않고 격리함</p></li>`).join("")}</ul>` : `<p class="empty">없음</p>`}
     <h3 class="group">검토에서 뺀 항목 (${result.review.removed.length})</h3>

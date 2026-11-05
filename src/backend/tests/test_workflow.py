@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from app import agents as A
 from app.schemas import (
+    Resolution,
+    ScheduleRevision,
     Assignment,
     Evidence,
     LeadPlan,
@@ -66,6 +68,10 @@ def fake_agents(monkeypatch):
                               evidence=Evidence(message_id="s1-m12", quote="내일 오전 10시 주간회의 잊지 마세요")),
             ]
         ),
+        ScheduleRevision: ScheduleRevision(
+            resolutions=[Resolution(event_id="e1", action="move_mine", alt_start="15:00", alt_end="16:00", note="겹치는 시간")],
+            reply="빈 시간을 찾았어요.",
+        ),
         ReplyResult: ReplyResult(debts=[ReplyDebt(direction="i_owe", room="마케팅팀", counterpart="이수진", topic="광고비 엑셀",
                                                   evidence=Evidence(message_id="s1-m9", quote="광고비 집행 내역 엑셀 어디 있는지 아세요?"))]),
     }
@@ -97,6 +103,12 @@ async def test_workflow_reviews_and_isolates_errors(fake_agents):
     assert any("고객사 A 월간 보고" in c for c in output["review"]["conflicts"]), "기존 캘린더와 충돌 표시"
     assert [e["title"] for e in output["events"]] == ["분기 리뷰 회의"], "이미 캘린더에 있는 일정은 빼야 한다"
     assert output["events"][0]["conflicts"], "겹치는 일정에는 표시가 붙어야 한다"
+    fix = output["events"][0]["resolution"]
+    assert fix["action"] != "keep" and fix["alt_start"] != "15:00", "여전히 겹치는 조정안은 규칙으로 바꾼다"
+    talk = output["review"]["dialogue"]
+    assert [(t["from"], t["to"]) for t in talk] == [("review", "schedule"), ("schedule", "review"), ("review", "user")]
+    assert talk[1]["text"] == "빈 시간을 찾았어요."
+    assert "다시 겹쳐서" in talk[2]["text"], "검토 비서가 잘못된 조정안을 고쳤다고 알린다"
     assert output["fallbacks"] == ["reply"] and not output["errors"], "모델 호출이 실패한 비서는 규칙 기반으로 대체"
     assert output["replies"], "대체 비서가 답장 결과를 채운다"
     assert any(p["node"] == "reply" and p["status"] == "fallback" for p in progress)
@@ -119,6 +131,11 @@ async def test_deterministic_fallback_runs_whole_sample():
     assert output["ledger"]["open_questions"]
     assert output["review"]["crunch"] and output["review"]["crunch"][0]["date"] == "2026-11-06"
     assert any(p["status"] == "tool" for p in progress), "날짜 도구 호출이 진행판에 보여야 한다"
+    fixes = [(e["date"], e["resolution"]) for e in output["events"] if e["conflicts"]]
+    assert fixes and all(r and r["note"] for _, r in fixes), "충돌 일정마다 일정 비서의 조정안이 붙는다"
+    slots = [(d, r["alt_start"]) for d, r in fixes if r["alt_start"]]
+    assert len(slots) == len(set(slots)), "같은 빈 시간을 두 번 제안하지 않는다"
+    assert any(p["status"] == "talk" for p in progress), "비서끼리 대화가 진행판에 흘러야 한다"
 
 
 async def test_single_input_runs_without_fan_out():

@@ -91,6 +91,23 @@ REPLY_INSTRUCTIONS = f"""당신은 '답장 비서'다. 답장 빚을 정리한�
   "evidence": {{"message_id": "s1-m3", "quote": "원문 그대로의 짧은 인용"}}}}]}}"""
 
 
+REVISE_INSTRUCTIONS = f"""당신은 '일정 비서'다. 검토 비서가 당신이 제안한 일정에서 시간 충돌을 찾아 조정을 요청했다.
+<conflicts> 안의 충돌 일정마다 find_free_slots 도구로 그날의 빈 시간을 찾은 뒤 하나를 고른다.
+다른 사람이 정한 회의 시간은 내가 바꿀 수 없다. 그래서:
+- my_attendance가 requested(참석 가능 여부를 물어본 일정)면 action=propose_time: 상대에게 제안할 대안 시간(alt_start, alt_end).
+- confirmed이거나 내 캘린더 일정과 겹치면 action=move_mine: 겹치는 '내 기존 일정'을 옮길 빈 시간(alt_start, alt_end).
+- 빈 시간이 없거나 판단이 어려우면 action=keep.
+alt_start/alt_end는 반드시 도구가 돌려준 빈 시간 안에서 고르고, 같은 날 두 일정에 같은 시간을 주지 않는다.
+note는 사용자에게 보여 줄 짧은 한 문장. reply는 검토 비서에게 하는 한두 문장 답이다.
+note와 reply에는 e1 같은 ID 대신 일정 이름을 쓴다.
+
+{SAFETY_RULES}
+
+출력 JSON 형식:
+{{"resolutions": [{{"event_id": "e1", "action": "propose_time|move_mine|keep", "alt_start": "HH:MM 또는 null",
+  "alt_end": "HH:MM 또는 null", "note": "..."}}], "reply": "..."}}"""
+
+
 class AgentRunError(Exception):
     """비서 실행 실패. 사용자에게는 message만 보여 준다."""
 
@@ -136,6 +153,23 @@ def make_date_tool(emit: Emit):
         return result
 
     return resolve_date
+
+
+def make_slot_tool(finder: Callable[[str, int], list[str]], emit: Emit):
+    from agent_framework import tool
+
+    @tool(
+        name="find_free_slots",
+        description="날짜(YYYY-MM-DD)와 필요한 시간(분)을 받아, 내 캘린더와 제안 일정을 피해 그날 09:00~18:00 사이의 빈 시간을 "
+        "'HH:MM~HH:MM' 목록으로 돌려준다.",
+    )
+    async def find_free_slots(date: str, duration_min: int = 60) -> str:
+        slots = finder(date, duration_min)
+        output = ", ".join(slots) if slots else "빈 시간 없음"
+        await emit("tool", {"tool": "find_free_slots", "input": date, "reference": f"{duration_min}분", "output": output})
+        return output
+
+    return find_free_slots
 
 
 def build_agent(client: Any, name: str, instructions: str, model: str, tools: list[Any] | None = None):
