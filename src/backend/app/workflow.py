@@ -74,6 +74,7 @@ class Briefing:
     calendar: list[CalendarEntry]
     flagged: set[str]
     mode: str
+    fallbacks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -82,6 +83,7 @@ class SpecialistOutput:
     briefing: Briefing
     result: BaseModel | None
     error: str | None
+    fallback: bool = False
 
 
 @dataclass
@@ -196,6 +198,19 @@ class LeadExecutor(Executor):
         await emit("start", {"step": "분석", "me": me, "reference_date": reference_date, "mode": mode})
         plan: LeadPlan | None = None
         error: str | None = None
+        fallbacks: list[str] = []
+
+        async def fallback(message: str) -> None:
+            nonlocal plan, error
+            try:
+                plan = F.lead([c.room for c in rooms], me, flagged)
+                fallbacks.append("lead")
+                await emit("fallback", {"message": f"{message} 규칙 기반 비서로 이어서 처리합니다."})
+                await emit("done", plan.model_dump())
+            except Exception:  # noqa: BLE001
+                error = message
+                await emit("error", {"code": "agent_failed", "message": message})
+
         try:
             if mode == "deterministic":
                 plan = F.lead([c.room for c in rooms], me, flagged)
@@ -211,11 +226,9 @@ class LeadExecutor(Executor):
                 me = plan.me
             await emit("done", plan.model_dump())
         except A.AgentRunError as exc:
-            error = exc.message
-            await emit("error", {"code": exc.code, "message": exc.message})
+            await fallback(exc.message)
         except Exception:  # noqa: BLE001 - 내부 오류 원문은 노출하지 않는다
-            error = "팀장 비서가 응답하지 못했습니다. 기본 지시로 계속합니다."
-            await emit("error", {"code": "agent_failed", "message": error})
+            await fallback("팀장 비서가 응답하지 못했습니다.")
         await ctx.send_message(
             Briefing(
                 rooms=rooms,
@@ -227,6 +240,7 @@ class LeadExecutor(Executor):
                 calendar=calendar,
                 flagged=flagged,
                 mode=mode,
+                fallbacks=fallbacks,
             )
         )
 
@@ -275,12 +289,24 @@ class SpecialistExecutor(Executor):
             await emit("done", {"count": _count(result)})
             await ctx.send_message(SpecialistOutput(self._kind, briefing, result, None))
         except A.AgentRunError as exc:
-            await emit("error", {"code": exc.code, "message": exc.message})
-            await ctx.send_message(SpecialistOutput(self._kind, briefing, None, f"{label}: {exc.message}"))
+            await self._fallback(briefing, emit, ctx, f"{label}: {exc.message}")
         except Exception:  # noqa: BLE001
-            message = f"{label}가 응답하지 못했습니다."
-            await emit("error", {"code": "agent_failed", "message": message})
-            await ctx.send_message(SpecialistOutput(self._kind, briefing, None, message))
+            await self._fallback(briefing, emit, ctx, f"{label}가 응답하지 못했습니다.")
+
+    async def _fallback(self, briefing: Briefing, emit: A.Emit, ctx: WorkflowContext[SpecialistOutput], message: str) -> None:
+        """모델 호출이 실패하면 이 비서만 규칙 기반으로 다시 처리해 결과를 끝까지 채운다."""
+
+        if briefing.mode != "deterministic":
+            try:
+                await emit("fallback", {"message": f"{message} 규칙 기반 비서로 이어서 처리합니다."})
+                result = await self._deterministic(briefing, emit)
+                await emit("done", {"count": _count(result), "fallback": True})
+                await ctx.send_message(SpecialistOutput(self._kind, briefing, result, None, fallback=True))
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        await emit("error", {"code": "agent_failed", "message": message})
+        await ctx.send_message(SpecialistOutput(self._kind, briefing, None, message))
 
 
 def _count(result: BaseModel) -> int:
@@ -470,6 +496,7 @@ class ReviewExecutor(Executor):
                 "replies": [d.model_dump() for d in debts],
                 "review": review,
                 "errors": errors,
+                "fallbacks": briefing.fallbacks + [o.kind for o in outputs if o.fallback],
                 "source": {
                     m_id: {"room": r.name, "channel": r.channel, "sender": m.sender, "when": f"{m.date} {m.time}", "text": m.text}
                     for m_id, (r, m) in index.items()

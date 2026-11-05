@@ -180,6 +180,7 @@ dependencies = [
     { name = "azure-monitor-opentelemetry" },
     { name = "fastapi" },
     { name = "pydantic-settings" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -198,6 +199,7 @@ requires-dist = [
     { name = "azure-monitor-opentelemetry", specifier = ">=1.6" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "tzdata", specifier = ">=2026.6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 

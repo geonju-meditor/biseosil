@@ -46,6 +46,7 @@
         </form>
       </details>
       <p id="form-error" class="alert" role="alert" hidden></p>
+      <button id="retry-btn" class="btn" type="button" hidden>↻ 다시 시도</button>
     </section>
 
     <section id="board-section" class="panel" aria-labelledby="board-title" hidden>
@@ -53,6 +54,7 @@
         <h2 id="board-title">비서실 작업 현황</h2>
         <span id="mode-badge" class="badge warn" hidden title="AI 연결이 없어 규칙 기반 비서가 대신 답합니다">대체 모드</span>
         <span id="timer" class="timer">0.0초</span>
+        <button id="cancel-btn" class="btn small" type="button" hidden>취소</button>
       </div>
       <p class="muted small">Microsoft Agent Framework 워크플로 · 채널별 수집 동시 처리 → 팀장 지시 → 전문 비서 3명 동시 작업 → 검토 · AG-UI 이벤트로 실시간 표시</p>
       <ol id="board" class="board"></ol>

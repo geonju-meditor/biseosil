@@ -97,7 +97,9 @@ async def test_workflow_reviews_and_isolates_errors(fake_agents):
     assert any("고객사 A 월간 보고" in c for c in output["review"]["conflicts"]), "기존 캘린더와 충돌 표시"
     assert [e["title"] for e in output["events"]] == ["분기 리뷰 회의"], "이미 캘린더에 있는 일정은 빼야 한다"
     assert output["events"][0]["conflicts"], "겹치는 일정에는 표시가 붙어야 한다"
-    assert "reply" in output["errors"] and output["replies"] == [], "한 비서 실패는 그 비서만 오류로 표시"
+    assert output["fallbacks"] == ["reply"] and not output["errors"], "모델 호출이 실패한 비서는 규칙 기반으로 대체"
+    assert output["replies"], "대체 비서가 답장 결과를 채운다"
+    assert any(p["node"] == "reply" and p["status"] == "fallback" for p in progress)
     channels = [i["channel"] for i in output["inputs"]]
     assert channels == ["kakao", "kakao", "mail", "calendar"]
     assert output["inputs"][1]["flagged"] == ["s2-m7"] and output["inputs"][2]["flagged"] == ["s3-m4"]

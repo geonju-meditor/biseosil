@@ -11,6 +11,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from email import policy
 from email.utils import parseaddr, parsedate_to_datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .kakao import CalendarEntry, Message, Room, parse_export
 
@@ -141,6 +142,11 @@ def _ics_time(prop: str, value: str) -> tuple[str, str | None] | None:
         return None
     if value.endswith("Z"):
         dt = dt.replace(tzinfo=timezone.utc).astimezone(KST)
+    elif match := re.search(r"TZID=([^;:]+)", prop):
+        try:
+            dt = dt.replace(tzinfo=ZoneInfo(match.group(1).strip('"'))).astimezone(KST)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
     return dt.date().isoformat(), dt.strftime("%H:%M")
 
 

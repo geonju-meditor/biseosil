@@ -44,7 +44,7 @@ FastAPI (Python 3.12, uvicorn) ── Azure Container Apps
 | `src/backend/app/workflow.py` | 워크플로 그래프, 실행기, 검토 로직 |
 | `src/backend/app/agents.py` | 비서 지시문, `GitHubCopilotAgent` 생성, JSON 실행·재시도, 날짜 도구 |
 | `src/backend/app/fallback.py` | 규칙 기반 대체 비서 |
-| `src/backend/app/channels.py` | 메일(붙여넣기·.eml)·캘린더(.ics) 파서 |
+| `src/backend/app/channels.py` | 메일(붙여넣기·.eml)·캘린더(.ics) 파서. `.ics`의 UTC(`Z`)·`TZID` 시각은 한국 시간으로 변환 |
 | `src/backend/app/kakao.py` | 카카오톡 PC·모바일 내보내기 파서 |
 | `src/backend/app/dates.py` | 한국어 날짜 표현 → `YYYY-MM-DD` |
 | `src/backend/app/safety.py` | 개인정보 마스킹, 인젝션 의심 판정 |
@@ -96,8 +96,9 @@ flowchart TD
 ### 3.5 출력 검증과 재시도
 
 - 모든 LLM 비서는 JSON만 출력하고 `pydantic` 스키마(`schemas.py`)로 검증한다.
-- 검증 실패 시 오류 내용을 알려 주고 1회 재시도한다. 그래도 실패하면 해당 비서만 오류로 표시하고
-  나머지 결과를 보여 준다. 비서별 제한 시간은 75초, 전체 실행 제한은 180초다.
+- 검증 실패 시 오류 내용을 알려 주고 1회 재시도한다. 그래도 실패하거나 모델 호출이 실패·시간 초과되면
+  **그 비서만** 규칙 기반 대체 비서로 다시 처리하고(`fallback` 진행 이벤트), 대체마저 실패하면 그 비서만
+  오류로 표시하고 나머지 결과를 보여 준다. 비서별 제한 시간은 75초, 전체 실행 제한은 180초다.
 
 ### 3.6 검토 규칙
 
@@ -119,7 +120,8 @@ flowchart TD
   - 일정: 날짜 표현 + 시각 표현이 있는 메시지, 날짜는 같은 `resolve_korean_date`로 계산
   - 답장: 나에게 온 질문 중 이후 내가 답하지 않은 것
   - 인용은 원문 일부를 그대로 써서 검토 규칙을 통과한다.
-- 결과에 `mode: "copilot" | "deterministic"`을 넣고 화면에 "대체 모드"를 표시한다. 테스트는 대체 비서와
+- 실행 중 일부 비서만 실패하면 그 비서만 대체하고 결과의 `fallbacks`(예: `["reply"]`)에 기록한다.
+- 결과에 `mode: "copilot" | "deterministic"`과 `fallbacks`를 넣고 화면에 "대체 모드"/"일부 대체"를 표시한다. 테스트는 대체 비서와
   가짜 에이전트로 네트워크 없이 실행한다.
 
 ## 4. API

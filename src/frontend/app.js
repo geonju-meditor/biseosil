@@ -55,16 +55,23 @@ $("#restart-btn").addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-function showFormError(msg) {
+function showFormError(msg, canRetry = false) {
   const el = $("#form-error");
   el.textContent = msg;
   el.hidden = !msg;
+  $("#retry-btn").hidden = !(msg && canRetry && lastPayload);
 }
 
 // ---------- 실행 + SSE ----------
+let lastPayload = null;
+let controller = null;
+
 async function run(payload) {
   if (running) return;
   running = true;
+  lastPayload = payload;
+  controller = new AbortController();
+  $("#cancel-btn").hidden = false;
   showFormError("");
   setBusy(true);
   $("#result-section").hidden = true;
@@ -78,6 +85,7 @@ async function run(payload) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
     if (!res.ok) {
       let msg = "요청을 처리하지 못했습니다.";
@@ -107,15 +115,20 @@ async function run(payload) {
     if (!gotResult) throw new Error("연결이 끊겼습니다. 다시 시도해 주세요.");
   } catch (err) {
     $("#intro").hidden = false;
-    showFormError(`⚠️ ${err.message || "문제가 생겼습니다."}`);
+    const cancelled = err.name === "AbortError";
+    showFormError(cancelled ? "분석을 취소했습니다." : `⚠️ ${err.message || "문제가 생겼습니다."}`, true);
     $("#board-status").textContent = "작업이 중단되었습니다.";
     $("#form-error").scrollIntoView({ behavior: "smooth", block: "center" });
   } finally {
     stopTimer();
     setBusy(false);
     running = false;
+    $("#cancel-btn").hidden = true;
   }
 }
+
+$("#cancel-btn").addEventListener("click", () => controller?.abort());
+$("#retry-btn").addEventListener("click", () => { if (lastPayload) run(lastPayload); });
 
 function setBusy(busy) {
   for (const b of document.querySelectorAll("#sample-btn, #run-form button")) {
@@ -235,6 +248,11 @@ function handleEvent(ev) {
       log(`${name} 도구 호출: ${d.tool}("${d.input}") → ${d.output}`);
       break;
     }
+    case "fallback":
+      setStatus(card, "retry");
+      detail.textContent = d.message;
+      log(`${name}: ${d.message}`);
+      break;
     case "retry":
       setStatus(card, "retry");
       detail.textContent = d.reason;
@@ -256,7 +274,7 @@ function handleEvent(ev) {
       } else if (id === "review") {
         detail.textContent = `근거 없는 항목·중복 ${d.removed}건 제거, 일정 충돌 ${d.conflicts}건 확인`;
       } else {
-        detail.textContent = `${d.count}건 정리 완료`;
+        detail.textContent = `${d.count}건 정리 완료${d.fallback ? " (규칙 기반 대체)" : ""}`;
       }
       $("#board-status").textContent = `${name} 완료`;
       log(`${name} 완료`);
@@ -304,7 +322,9 @@ function showResult(data) {
     <div class="stat good"><b>${s.elapsedSec}초</b><span>비서실 처리 시간</span></div>
     <div class="stat"><b>${s.messages}개</b><span>읽은 메시지·메일 · 출처 ${data.inputs.length}곳</span></div>
     <p class="muted small formula">추정식: ${esc(s.formula)}</p>`;
-  $("#result-mode").hidden = data.mode !== "deterministic";
+  const fb = data.fallbacks || [];
+  $("#result-mode").hidden = data.mode !== "deterministic" && !fb.length;
+  $("#result-mode").textContent = data.mode === "deterministic" ? "대체 모드" : "일부 대체";
   const lead = data.lead;
   $("#summary").innerHTML = lead
     ? `<p><b>🧭 팀장 요약 (${esc(data.me || "나")} 기준 · ${fmtDate(data.referenceDate)})</b></p><p>${esc(lead.summary)}</p>`
@@ -314,6 +334,7 @@ function showResult(data) {
   for (const c of data.review.crunch) alerts.push(`<li>🔥 ${fmtDate(c.date)}에 할 일 ${c.count}개가 몰려 있습니다: ${c.items.map(esc).join(", ")}</li>`);
   for (const w of lead?.warnings || []) alerts.push(`<li>💡 ${esc(w)}</li>`);
   const errs = Object.entries(data.errors || {});
+  if (data.mode !== "deterministic" && fb.length) alerts.push(`<li class="err">⚠️ ${fb.map((k) => esc(AGENTS[k]?.name || k)).join(", ")}는 AI 응답이 실패해 규칙 기반으로 대신 정리했습니다.</li>`);
   for (const [k, m] of errs) alerts.push(`<li class="err">⚠️ ${esc(AGENTS[k]?.name || k)}: ${esc(m)}</li>`);
   $("#alerts").innerHTML = alerts.length ? `<ul class="alert-list">${alerts.join("")}</ul>` : "";
   renderAll();
