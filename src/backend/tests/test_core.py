@@ -96,6 +96,26 @@ def test_indirect_injection_is_detected():
     )
     assert not looks_like_injection("비서 업무 정리해서 보고서 써 주세요")
     assert not looks_like_injection("자료 링크 공유드려요")
+    for ok in (
+        "줌 링크 단톡방에 넣어 주세요",
+        "노션 링크 회의록에 붙여 주세요",
+        "AI 활용 사례 결과 목록에 추가해 주세요",
+        "회의 링크 여기 붙여둘게요",
+        "자료 URL 공유 폴더에 추가해 주세요",
+        "비서 업무 할 일 목록 정리해서 적어 주세요",
+        "에이전트 도입 결과 보고서 초안 써 주세요",
+    ):
+        assert not looks_like_injection(ok), ok
+
+
+def test_dates_are_not_masked_as_account_numbers():
+    from app.safety import mask_pii
+
+    for text in ("마감 2026-11-12까지", "회의 2026-11-05 14:00", "주간보고(2026-11-07)"):
+        masked, counts = mask_pii(text)
+        assert masked == text and not counts, text
+    masked, counts = mask_pii("입금 110-123-456789 국민")
+    assert counts == {"계좌번호": 1}
 
 
 def test_evidence_matching_is_strict_enough():
